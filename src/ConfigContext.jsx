@@ -4,7 +4,6 @@ import { Loader2 } from 'lucide-react';
 
 const ConfigContext = createContext();
 
-// 默认配置 (防止数据库连不上时白屏)
 const defaultConfig = {
   app_name: 'KiwiBlue',
   app_slogan: '建筑招工神器',
@@ -27,12 +26,10 @@ export function ConfigProvider({ children }) {
       try {
         const { data } = await supabase.from('app_config').select('*');
         if (data && data.length > 0) {
-          // 把数组 [ {key: 'a', value: '1'} ] 转换成对象 { a: '1' }
           const configMap = data.reduce((acc, item) => {
             acc[item.key] = item.value;
             return acc;
           }, {});
-          // 合并默认值，防止数据库缺字段
           setConfig({ ...defaultConfig, ...configMap });
         }
       } catch (e) {
@@ -55,7 +52,6 @@ export function ConfigProvider({ children }) {
   );
 }
 
-// 方便组件调用的 Hook
 export function useConfig() {
   return useContext(ConfigContext);
 }

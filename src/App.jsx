@@ -5,7 +5,6 @@ import Onboarding from './Onboarding';
 import PostJob from './PostJob'; 
 import Profile from './Profile'; 
 import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown } from 'lucide-react';
-// 1. 引入动画库
 import { motion, useMotionValue, useTransform } from 'framer-motion';
 
 const Header = ({ onOpenProfile }) => (
@@ -20,13 +19,10 @@ const Header = ({ onOpenProfile }) => (
   </div>
 );
 
-// === 核心：可拖拽的卡片组件 ===
 const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
   const x = useMotionValue(0);
-  const rotate = useTransform(x, [-200, 200], [-10, 10]); // 旋转效果
+  const rotate = useTransform(x, [-200, 200], [-10, 10]); 
   const opacity = useTransform(x, [-200, -100, 0, 100, 200], [0, 1, 1, 1, 0]);
-  
-  // 颜色反馈：右滑变绿/金，左滑变红
   const borderColor = useTransform(x, [-200, 0, 200], ['#ef4444', '#ffffff', userRole === 'worker' ? '#22c55e' : '#eab308']);
   
   const handleDragEnd = (event, info) => {
@@ -42,15 +38,13 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
 
   return (
     <motion.div
-      drag="x" // 只允许横向拖拽
+      drag="x" 
       dragConstraints={{ left: 0, right: 0 }}
       style={{ x, rotate, opacity, position: 'absolute', top: 0, width: '100%', height: '100%', zIndex: 100 - index }}
       onDragEnd={handleDragEnd}
       className="bg-white rounded-[1.5rem] shadow-xl overflow-hidden flex flex-col h-[65vh] border-4"
     >
       <motion.div style={{ borderColor }} className="absolute inset-0 border-4 rounded-[1.5rem] pointer-events-none z-50 transition-colors" />
-      
-      {/* 卡片内容区域 */}
       <div className="h-3/5 relative bg-gray-200 pointer-events-none">
         <div className="w-full h-full bg-[#f3f4f6] flex justify-center items-center text-gray-400">
            {isJob ? <Building2 size={80} /> : <User size={80} />}
@@ -92,7 +86,9 @@ function App() {
   const [cards, setCards] = useState([]); 
   const [loading, setLoading] = useState(true);
 
-  // 初始化检查
+  // 🔴 您的客服微信号 (请在这里修改)
+  const CUSTOMER_SERVICE_WECHAT = "Kiwi_Admin_001";
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -108,14 +104,11 @@ function App() {
 
   async function checkProfile(userId) {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
-    
-    // === 每日重置逻辑 ===
     if (data) {
       const today = new Date().toISOString().split('T')[0];
       if (data.last_active_date !== today) {
-        // 新的一天，重置已用次数
         await supabase.from('profiles').update({ swipes_used_today: 0, last_active_date: today }).eq('id', userId);
-        data.swipes_used_today = 0; // 本地也更新下
+        data.swipes_used_today = 0;
       }
       setUserProfile(data);
     }
@@ -143,46 +136,39 @@ function App() {
 
   const isVip = () => userProfile?.vip_expiry && new Date(userProfile.vip_expiry) > new Date();
 
-  // === 核心：滑动处理逻辑 ===
+  // 复制微信号逻辑
+  const handleContactSupport = () => {
+    alert(`请添加客服微信充值/开通VIP：\n\n${CUSTOMER_SERVICE_WECHAT}\n\n(点击确定自动复制)`);
+    navigator.clipboard.writeText(CUSTOMER_SERVICE_WECHAT);
+  };
+
   const handleSwipe = async (direction) => {
     const currentCard = cards[currentIndex];
     
-    // 1. 左滑：不需要任何限制，直接走
     if (direction === 'left') {
       setCurrentIndex(curr => curr + 1);
       return;
     }
 
-    // 2. 右滑：需要判断权限和逻辑
     if (direction === 'right') {
-      
-      // === 工友逻辑 (含每日限制) ===
       if (userProfile.role === 'worker') {
         const limit = 20 + (userProfile.swipe_quota_extra || 0);
         const used = userProfile.swipes_used_today || 0;
 
         if (used >= limit) {
           alert(`今天查看次数已达上限 (${limit}次)！\n\n💡 邀请工友注册，每人奖励 5 次机会！\n\n您的邀请码是您的手机号。`);
-          // 这里的 return 非常关键，阻止卡片飞走（实际上 DraggableCard 已经在飞了，这里需要一种回滚机制，但MVP简单处理：弹窗阻断，让用户刷新）
-          // 更好的做法是 DraggableCard 组件里不要飞走，或者这里重置 Index。
-          // 简单方案：刷新页面
           window.location.reload(); 
           return;
         }
 
-        // 没超限，扣次数 + 记录意向
         await supabase.from('profiles').update({ swipes_used_today: used + 1 }).eq('id', session.user.id);
         await supabase.from('jobs').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id);
         
-        // 更新本地状态以免频繁请求
         setUserProfile(prev => ({...prev, swipes_used_today: used + 1}));
-        setCurrentIndex(curr => curr + 1); // 成功飞走
+        setCurrentIndex(curr => curr + 1);
         return;
       } 
-      
-      // === 老板逻辑 (VIP & 扣费) ===
       else if (userProfile.role === 'boss') {
-        // VIP
         if (isVip()) {
            await supabase.from('contacts').insert({ boss_id: session.user.id, worker_id: currentCard.id });
            await supabase.from('profiles').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id);
@@ -191,23 +177,16 @@ function App() {
            return;
         }
 
-        // 普通老板 (需要弹窗确认，这里没法做成完全手势滑动，因为弹窗会打断动画，但我们可以先弹窗，确认后再飞)
-        // 注意：DraggableCard 的逻辑是先松手后触发这里。所以会有个时间差。
-        // 为了体验，我们这里只能接受“先松手，再弹窗，如果不买，卡片其实已经划过去了...这在逻辑上有点怪”
-        // 修正方案：老板模式下，右滑不自动飞，而是弹窗。如果取消，需要恢复卡片。
-        // MVP 简单处理：如果取消，刷新页面恢复卡片。
-        
         const cost = calculateCost(currentCard);
         const confirmUnlock = window.confirm(`解锁需扣 ${cost} 币，确认？`);
         
         if (!confirmUnlock) {
-          // 没买，刷新页面把卡片追回来
           window.location.reload();
           return;
         }
 
         if ((userProfile.credits || 0) < cost) {
-          alert("❌ 余额不足");
+          alert("❌ 余额不足，请充值或开通 VIP 无限刷！");
           window.location.reload();
           return;
         }
@@ -236,7 +215,6 @@ function App() {
   if (showPostJob) return <PostJob session={session} onClose={() => setShowPostJob(false)} onPostSuccess={fetchData} />;
   if (showProfile) return <Profile session={session} userProfile={userProfile} onClose={() => setShowProfile(false)} onLogout={async () => { await supabase.auth.signOut(); window.location.reload(); }} onProfileUpdate={() => checkProfile(session.user.id)} />;
 
-  // 刷完了
   if (currentIndex >= cards.length) {
     return (
       <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center">
@@ -244,8 +222,18 @@ function App() {
         <CheckCircle2 size={64} className="text-gray-300 mb-4" />
         <h2 className="text-xl font-bold text-gray-800">刷完了</h2>
         <p className="text-gray-500 mt-2 mb-6">暂时没有更多匹配。</p>
-        <button onClick={() => { setCurrentIndex(0); fetchData(); }} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium shadow-lg mb-3">刷新看看</button>
-        <button onClick={() => setShowProfile(true)} className="px-6 py-3 bg-white text-gray-700 border border-gray-200 rounded-xl font-medium">进入个人中心</button>
+        <div className="flex flex-col gap-3 w-full max-w-xs">
+          <button onClick={() => { setCurrentIndex(0); fetchData(); }} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium shadow-lg shadow-blue-200">刷新看看</button>
+          
+          {/* === 新增：VIP 充值按钮 === */}
+          {userProfile.role === 'boss' && (
+            <button onClick={handleContactSupport} className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-orange-500 text-white rounded-xl font-bold shadow-lg shadow-orange-200 flex items-center justify-center gap-2">
+              <Crown size={20} fill="white" /> 开通 VIP 无限刷
+            </button>
+          )}
+
+          <button onClick={() => setShowProfile(true)} className="px-6 py-3 bg-white text-gray-700 border border-gray-200 rounded-xl font-medium hover:bg-gray-50">进入个人中心</button>
+        </div>
         {userProfile.role === 'boss' && <button onClick={() => setShowPostJob(true)} className="mt-8 flex items-center gap-2 text-blue-600 font-bold bg-blue-50 px-6 py-3 rounded-xl"><Plus size={20} /> 发布新招工</button>}
       </div>
     );
@@ -256,10 +244,7 @@ function App() {
       <Header onOpenProfile={() => setShowProfile(true)} />
       
       <div className="px-4 mt-[60px] h-[calc(100vh-160px)] flex flex-col justify-center relative">
-        {/* 这里使用了反向堆叠，只渲染当前卡片和下一张 */}
         {cards.slice(currentIndex, currentIndex + 2).reverse().map((card, i) => {
-           // i=0 是下一张(底层), i=1 是当前张(顶层)
-           // 这里的逻辑稍微有点绕，为了性能我们只渲染2张
            const realIndex = currentIndex + (cards.slice(currentIndex, currentIndex + 2).length - 1 - i);
            return (
              <DraggableCard 
@@ -268,7 +253,7 @@ function App() {
                 userRole={userProfile.role} 
                 isVip={isVip()} 
                 onSwipe={handleSwipe} 
-                index={i} // 顶层 index=1, 底层 index=0
+                index={i}
              />
            );
         })}

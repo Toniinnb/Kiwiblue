@@ -50,7 +50,7 @@ function App() {
   const [cards, setCards] = useState([]); 
   const [loadingData, setLoadingData] = useState(false);
 
-  // 1. 检查 Session
+  // 1. Session Check
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -67,60 +67,117 @@ function App() {
   }, []);
 
   async function checkProfile(userId) {
-    // 增加 .maybeSingle() 防止报错
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
     if (data) setUserProfile(data);
     setLoadingSession(false);
   }
 
-  // 2. 抓取数据
+  // 2. Data Fetching
   const fetchData = async () => {
     if (!session || !userProfile) return;
     setLoadingData(true);
-    
     try {
       if (userProfile.role === 'worker') {
         const { data } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
         setCards(data || []);
-      } 
-      else {
+      } else {
+        // 老板抓取工人：排除已解锁的 (可选优化，V1.0先不排除，允许重复看)
         const { data } = await supabase.from('profiles')
           .select('*')
           .eq('role', 'worker')
           .neq('status', 'busy') 
-          .order('updated_at', { ascending: false }); // 改用 updated_at 排序
+          .order('updated_at', { ascending: false });
         setCards(data || []);
       }
-    } catch (error) {
-      console.error("抓取数据出错:", error);
-    }
+    } catch (error) { console.error(error); }
     setLoadingData(false);
   };
 
-  useEffect(() => {
-    fetchData();
-  }, [userProfile]);
+  useEffect(() => { fetchData(); }, [userProfile]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    setUserProfile(null);
-    setShowProfile(false);
-    window.location.reload(); // 强制刷新，解决一切状态卡死
+    window.location.reload();
   };
 
-  const handleSwipe = (direction) => {
-    if (direction === 'right') alert("感兴趣！(未来接通扣费)");
-    if (currentIndex < cards.length) setCurrentIndex(curr => curr + 1);
+  // === 💰 核心逻辑：智能定价算法 ===
+  const calculateCost = (card) => {
+    if (!card.experience) return 1; // 没写经验，默认1币
+    // 提取数字 (例如 "5年" -> 5)
+    const match = card.experience.match(/(\d+)/); 
+    if (match) {
+      let years = parseInt(match[0], 10);
+      if (years > 10) years = 10; // 封顶10币
+      if (years < 1) years = 1;   // 保底1币
+      return years;
+    }
+    return 1; // 没数字(如"新手")，默认1币
   };
 
-  // === 紧急救援按钮 (防止白屏卡死) ===
+  const handleSwipe = async (direction) => {
+    const currentCard = cards[currentIndex];
+    
+    // 左滑：不喜欢，直接下一个
+    if (direction === 'left') {
+      setCurrentIndex(curr => curr + 1);
+      return;
+    }
+
+    // 右滑：交易逻辑
+    if (direction === 'right') {
+      
+      // 场景 A: 工友滑工作
+      if (userProfile.role === 'worker') {
+        alert("✅ 已发送意向！老板上线后会看到。");
+        setCurrentIndex(curr => curr + 1);
+        return;
+      }
+
+      // 场景 B: 老板滑工友 (扣费解锁)
+      if (userProfile.role === 'boss') {
+        const cost = calculateCost(currentCard);
+        
+        // 1. 确认弹窗
+        const confirmUnlock = window.confirm(`这位师傅经验值为【${currentCard.experience || '入门'}】，解锁联系方式需要扣除 【${cost}金币】。\n\n您当前余额：${userProfile.credits || 0}\n是否确认解锁？`);
+        
+        if (!confirmUnlock) return; // 后悔了
+
+        // 2. 检查余额
+        if ((userProfile.credits || 0) < cost) {
+          alert("❌ 余额不足，请充值！");
+          return;
+        }
+
+        // 3. 执行交易 (前端简单版，实际项目应用后端事务)
+        // 3.1 扣费
+        const { error: creditError } = await supabase
+          .from('profiles')
+          .update({ credits: userProfile.credits - cost })
+          .eq('id', session.user.id);
+
+        if (creditError) return alert("交易失败：" + creditError.message);
+
+        // 3.2 记录通讯录
+        const { error: contactError } = await supabase
+          .from('contacts')
+          .insert({ boss_id: session.user.id, worker_id: currentCard.id });
+
+        // 3.3 成功反馈
+        alert("🔓 解锁成功！\n\n请点击右上角【个人中心】->【已解锁】查看电话。");
+        
+        // 刷新个人资料(更新余额)
+        checkProfile(session.user.id);
+        setCurrentIndex(curr => curr + 1);
+      }
+    }
+  };
+
+  // ... (渲染部分与之前相同，为节省篇幅，EmergencyLogout 和 Card 渲染逻辑保持不变)
+  // ... 请保留之前的 EmergencyLogout, getCardTitle 等辅助函数 ...
+  // 为了保证您复制完整，我把关键渲染部分再贴一次：
+
   const EmergencyLogout = () => (
-    <button 
-      onClick={handleLogout} 
-      className="fixed top-20 right-4 z-50 bg-red-100 text-red-500 text-xs px-2 py-1 rounded border border-red-200 opacity-50 hover:opacity-100"
-    >
-      遇到问题？点此强制登出
-    </button>
+    <button onClick={handleLogout} className="fixed top-20 right-4 z-50 bg-red-100 text-red-500 text-xs px-2 py-1 rounded border border-red-200 opacity-50 hover:opacity-100">遇到问题？点此登出</button>
   );
 
   if (loadingSession) return <div className="h-screen flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-600" /></div>;
@@ -129,17 +186,11 @@ function App() {
 
   if (showPostJob) return <PostJob session={session} onClose={() => setShowPostJob(false)} onPostSuccess={fetchData} />;
   
-  // 修复点：传入 checkProfile 给 Profile 组件，实现状态刷新
   if (showProfile) return <Profile session={session} userProfile={userProfile} onClose={() => setShowProfile(false)} onLogout={handleLogout} onProfileUpdate={() => checkProfile(session.user.id)} />;
 
   const currentCard = cards[currentIndex];
 
-  if (loadingData) return (
-    <div className="h-screen flex items-center justify-center">
-      <EmergencyLogout />
-      <Loader2 className="animate-spin text-blue-600" />
-    </div>
-  );
+  if (loadingData) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-blue-600" /></div>;
 
   if (!currentCard) {
     return (
@@ -158,30 +209,21 @@ function App() {
     );
   }
 
-  // === 核心修复区：数据清洗 ===
-  // 无论数据多烂，这里都不能报错
+  // Card Display Logic
   const isViewingJob = userProfile.role === 'worker';
-  
-  // 安全获取字段
   const getCardTitle = () => {
     if (isViewingJob) return currentCard.title || "招工";
-    // 老板看工人：解析 intro，如果 intro 为空或格式不对，显示默认
     if (!currentCard.intro) return "工友";
     return currentCard.intro.split(' ')?.[0] || "工友";
   };
-
   const getCardPrice = () => {
     if (isViewingJob) return currentCard.wage || "面议";
-    // 工人薪资
     if (!currentCard.intro) return "面议";
     return currentCard.intro.split(' ')?.[1] || "面议";
   };
-  
   const getCardTags = () => {
-    // 确保 tags 永远是数组
     const tags = currentCard.tags || [];
     if (tags.length > 0) return tags;
-    // 如果没有 tags，尝试显示经验
     return currentCard.experience ? [currentCard.experience] : [];
   };
 
@@ -192,9 +234,7 @@ function App() {
 
   return (
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
-      {/* 如果卡住了，屏幕右上角会有这个小小的红色救生圈 */}
       <EmergencyLogout />
-      
       <Header onOpenProfile={() => setShowProfile(true)} />
 
       <div className="px-4 mt-[60px] h-[calc(100vh-160px)] flex flex-col justify-center">
@@ -236,7 +276,7 @@ function App() {
             </div>
             
             <div className="mt-auto pt-4 flex items-center text-gray-400 text-sm">
-               <p>左右滑动以选择</p>
+               <p>左右滑动以选择 (右滑解锁)</p>
             </div>
           </div>
         </div>

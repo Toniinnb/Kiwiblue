@@ -6,34 +6,59 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false); // 切换 登录/注册 模式
+  const [statusText, setStatusText] = useState('登录 / 注册'); // 按钮上的文字动态变化
 
-  const handleAuth = async (e) => {
+  // === 核心功能：智能二合一登录 ===
+  const handleSmartAuth = async (e) => {
     e.preventDefault();
+    if (!email || !password) return alert("请填写账号和密码");
+    
     setLoading(true);
+    setStatusText('正在处理...');
 
-    if (isSignUp) {
-      // 注册逻辑
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-      if (error) alert(error.message);
-      else alert("注册成功！请直接登录。");
+    // 1. 先尝试注册 (假设他是新用户)
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+    });
+
+    if (signUpError) {
+      // 2. 如果报错说“用户已存在”，那我们就自动转去登录
+      // 注意：Supabase 的报错信息通常包含 "User already registered"
+      if (signUpError.message.includes("already registered") || signUpError.status === 400 || signUpError.status === 422) {
+        setStatusText('检测到老友，正在登录...');
+        
+        // 执行登录逻辑
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (signInError) {
+          alert("登录失败：密码错误，或者请检查邮箱");
+          setStatusText('登录 / 注册'); // 恢复按钮文字
+        } else {
+          // 登录成功！App.jsx 会自动监听到变化并跳转
+        }
+      } else {
+        // 真的是其他注册错误（比如密码太短）
+        alert("注册失败：" + signUpError.message);
+        setStatusText('登录 / 注册');
+      }
     } else {
-      // 登录逻辑
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (error) alert(error.message);
+      // 注册成功！
+      // 注意：如果您开启了邮箱验证，这里可能会卡住。但我们在配置里关了验证，所以应该直接能进。
+      alert("新账号注册成功！正在进入...");
     }
+    
     setLoading(false);
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-6 relative overflow-hidden">
-      {/* 背景图效果 */}
+    // 外层容器：确保占满全屏(h-full) 并强制居中
+    <div className="h-full w-full bg-gray-900 flex flex-col items-center justify-center p-6 relative overflow-hidden">
+      
+      {/* 背景图：加了 opacity-40 让它暗一点，不抢眼 */}
       <div 
         className="absolute inset-0 z-0 opacity-40"
         style={{
@@ -43,26 +68,27 @@ export default function Login() {
         }}
       />
 
-      <div className="z-10 w-full max-w-sm bg-white/10 backdrop-blur-md p-8 rounded-3xl border border-white/20 shadow-2xl">
+      {/* 登录框卡片 */}
+      <div className="z-10 w-full max-w-sm bg-white/10 backdrop-blur-md p-8 rounded-3xl border border-white/20 shadow-2xl animate-fade-in-up">
         <div className="flex justify-center mb-6">
-          <div className="p-3 rounded-xl bg-blue-600 text-white">
+          <div className="p-3 rounded-xl bg-blue-600 text-white shadow-lg shadow-blue-500/50">
             <Hammer size={32} />
           </div>
         </div>
         
         <h2 className="text-2xl font-bold text-white text-center mb-2">
-          {isSignUp ? '加入 KiwiBlue' : '欢迎回来'}
+          KiwiBlue 工友
         </h2>
         <p className="text-gray-300 text-center mb-8 text-sm">
-          新西兰华人工友直聘平台
+          自动识别注册或登录
         </p>
 
-        <form onSubmit={handleAuth} className="space-y-4">
+        <form onSubmit={handleSmartAuth} className="space-y-5">
           <div>
             <input
               type="email"
-              placeholder="请输入邮箱 / 手机号(假)"
-              className="w-full px-4 py-3 rounded-xl bg-white/20 border border-white/10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="手机号 / 邮箱"
+              className="w-full px-4 py-3.5 rounded-xl bg-white/20 border border-white/10 text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -71,8 +97,8 @@ export default function Login() {
           <div>
             <input
               type="password"
-              placeholder="请输入密码"
-              className="w-full px-4 py-3 rounded-xl bg-white/20 border border-white/10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="密码 (建议简单好记)"
+              className="w-full px-4 py-3.5 rounded-xl bg-white/20 border border-white/10 text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -82,19 +108,17 @@ export default function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3.5 rounded-xl bg-blue-600 text-white font-bold text-lg hover:bg-blue-700 transition-all flex justify-center items-center shadow-lg shadow-blue-500/30"
+            className="w-full py-4 rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 text-white font-bold text-lg hover:from-blue-700 hover:to-blue-600 active:scale-95 transition-all flex justify-center items-center shadow-lg shadow-blue-500/30"
           >
-            {loading ? <Loader2 className="animate-spin" /> : (isSignUp ? '立即注册' : '登录')}
+            {loading ? <Loader2 className="animate-spin mr-2" /> : null}
+            {statusText}
           </button>
         </form>
 
         <div className="mt-6 text-center">
-          <button
-            onClick={() => setIsSignUp(!isSignUp)}
-            className="text-sm text-blue-300 hover:text-white transition-colors"
-          >
-            {isSignUp ? '已有账号？去登录' : '还没有账号？去注册'}
-          </button>
+          <p className="text-xs text-gray-400">
+            点击按钮即代表同意 <span className="underline">服务条款</span>
+          </p>
         </div>
       </div>
     </div>

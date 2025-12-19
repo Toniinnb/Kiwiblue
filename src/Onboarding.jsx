@@ -1,23 +1,21 @@
 import React, { useState } from 'react';
 import { supabase } from './supabase';
 import { User, Building2, Hammer, Loader2, Gift, ArrowLeft } from 'lucide-react';
-import AvatarUpload from './AvatarUpload'; // 引入上传组件
+import AvatarUpload from './AvatarUpload'; 
+import { useConfig } from './ConfigContext'; // 引入 Hook
 
 export default function Onboarding({ session, onComplete }) {
+  const config = useConfig(); // 获取配置
   const [step, setStep] = useState(1); 
   const [role, setRole] = useState(null); 
   const [loading, setLoading] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
-    avatar_url: '', // 新增
+    avatar_url: '',
     phone: '',
     wechat: '',
-    jobType: '', 
-    rate: '',    
-    experience: '',
-    orgType: 'employer',
-    referralCode: ''
+    jobType: '', rate: '', experience: '', orgType: 'employer', referralCode: ''
   });
 
   const handleRoleSelect = (selectedRole) => {
@@ -28,7 +26,7 @@ export default function Onboarding({ session, onComplete }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.name || !formData.phone) return alert("称呼和手机号必填！");
-    if (role === 'worker' && (!formData.jobType || !formData.rate)) return alert("请补全求职信息");
+    if (role === 'worker' && (!formData.jobType || !formData.rate)) return alert("请补全信息");
 
     setLoading(true);
 
@@ -36,7 +34,7 @@ export default function Onboarding({ session, onComplete }) {
       id: session.user.id,
       role: role,
       name: formData.name,
-      avatar_url: formData.avatar_url, // 保存头像
+      avatar_url: formData.avatar_url,
       phone: formData.phone,
       wechat: formData.wechat,
       org_type: role === 'boss' ? formData.orgType : null,
@@ -51,11 +49,7 @@ export default function Onboarding({ session, onComplete }) {
 
     const { error } = await supabase.from('profiles').upsert(updates);
 
-    if (error) {
-      alert('保存失败: ' + error.message);
-      setLoading(false);
-      return;
-    }
+    if (error) { alert('保存失败: ' + error.message); setLoading(false); return; }
 
     if (formData.referralCode) {
       await supabase.rpc('apply_referral', {
@@ -63,6 +57,17 @@ export default function Onboarding({ session, onComplete }) {
         new_user_role: role,
         new_user_id: session.user.id
       });
+    } else {
+        // 尝试从 localStorage 拿
+        const storedRef = localStorage.getItem('kiwi_referral_code');
+        if (storedRef) {
+             await supabase.rpc('apply_referral', {
+                referrer_phone: storedRef,
+                new_user_role: role,
+                new_user_id: session.user.id
+             });
+             localStorage.removeItem('kiwi_referral_code'); // 用完即焚
+        }
     }
 
     onComplete(); 
@@ -75,41 +80,30 @@ export default function Onboarding({ session, onComplete }) {
         <h2 className="text-2xl font-bold text-gray-800 mb-2">您是来...</h2>
         <p className="text-gray-500 mb-8">请选择您的身份以开始</p>
         <div className="grid gap-6 w-full max-w-sm">
+          {/* === 动态角色名 === */}
           <button onClick={() => handleRoleSelect('worker')} className="bg-white p-6 rounded-2xl shadow-lg border-2 border-transparent hover:border-blue-500 transition-all flex items-center gap-4 text-left group">
             <div className="p-4 rounded-full bg-blue-100 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors"><Hammer size={32} /></div>
-            <div><h3 className="text-xl font-bold text-gray-900">我是工友</h3><p className="text-sm text-gray-500 mt-1">找活、接单、看工地</p></div>
+            <div><h3 className="text-xl font-bold text-gray-900">我是{config.role_worker_label}</h3><p className="text-sm text-gray-500 mt-1">{config.role_worker_desc}</p></div>
           </button>
           <button onClick={() => handleRoleSelect('boss')} className="bg-white p-6 rounded-2xl shadow-lg border-2 border-transparent hover:border-blue-500 transition-all flex items-center gap-4 text-left group">
             <div className="p-4 rounded-full bg-orange-100 text-orange-600 group-hover:bg-orange-600 group-hover:text-white transition-colors"><Building2 size={32} /></div>
-            <div><h3 className="text-xl font-bold text-gray-900">我是老板</h3><p className="text-sm text-gray-500 mt-1">招人、发帖、赶工期</p></div>
+            <div><h3 className="text-xl font-bold text-gray-900">我是{config.role_boss_label}</h3><p className="text-sm text-gray-500 mt-1">{config.role_boss_desc}</p></div>
           </button>
         </div>
       </div>
     );
   }
 
-  // === 步骤 2 ===
   return (
     <div className="min-h-screen bg-white px-6 py-10 animate-slide-up">
       <div className="max-w-md mx-auto">
         <div className="flex items-center gap-3 mb-6">
-          <button onClick={() => setStep(1)} className="p-2 -ml-2 rounded-full hover:bg-gray-100 text-gray-600">
-            <ArrowLeft size={24} />
-          </button>
-          <h2 className="text-2xl font-bold text-gray-900">完善{role === 'worker' ? '求职' : '招工'}资料</h2>
+          <button onClick={() => setStep(1)} className="p-2 -ml-2 rounded-full hover:bg-gray-100 text-gray-600"><ArrowLeft size={24} /></button>
+          <h2 className="text-2xl font-bold text-gray-900">完善资料</h2>
         </div>
         
         <form onSubmit={handleSubmit} className="space-y-5">
-          {/* 头像上传区 */}
-          <div className="flex justify-center mb-6">
-            <AvatarUpload 
-              url={formData.avatar_url} 
-              onUpload={(url) => setFormData({...formData, avatar_url: url})} 
-              role={role}
-              size={100}
-            />
-          </div>
-
+          <div className="flex justify-center mb-6"><AvatarUpload url={formData.avatar_url} onUpload={(url) => setFormData({...formData, avatar_url: url})} role={role} size={100} /></div>
           <div><label className="block text-sm font-medium text-gray-700 mb-1">怎么称呼您？</label><input type="text" required className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
 
           {role === 'worker' && (
@@ -139,7 +133,7 @@ export default function Onboarding({ session, onComplete }) {
 
           <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100">
              <label className="block text-sm font-bold text-yellow-800 mb-1 flex items-center gap-2"><Gift size={16}/> 邀请人手机号 (选填)</label>
-             <input type="tel" placeholder={role === 'boss' ? "填邀请人，立得 10 币奖励" : "填邀请人，立得 5 次额外机会"} className="w-full px-4 py-2 rounded-lg bg-white border border-yellow-200 outline-none text-sm" value={formData.referralCode} onChange={e => setFormData({...formData, referralCode: e.target.value})} />
+             <input type="tel" placeholder={role === 'boss' ? `填邀请人，立得 10 ${config.currency_name}` : "填邀请人，立得额外机会"} className="w-full px-4 py-2 rounded-lg bg-white border border-yellow-200 outline-none text-sm" value={formData.referralCode} onChange={e => setFormData({...formData, referralCode: e.target.value})} />
           </div>
 
           <button type="submit" disabled={loading} className="w-full py-4 mt-6 rounded-xl bg-blue-600 text-white font-bold text-lg hover:bg-blue-700 transition-all flex justify-center items-center shadow-lg shadow-blue-500/30">

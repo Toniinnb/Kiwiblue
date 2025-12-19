@@ -4,7 +4,7 @@ import Login from './Login';
 import Onboarding from './Onboarding';
 import PostJob from './PostJob'; 
 import Profile from './Profile'; 
-import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown } from 'lucide-react';
+import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown, Megaphone } from 'lucide-react';
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 
 const Header = ({ onOpenProfile }) => (
@@ -54,7 +54,6 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
       <motion.div style={{ borderColor }} className="absolute inset-0 border-[4px] rounded-[1.5rem] pointer-events-none z-50 transition-colors" />
       
       <div className="h-[40%] relative bg-gray-200 pointer-events-none overflow-hidden">
-        {/* === 核心修改：显示真实照片 === */}
         {data.avatar_url ? (
           <img src={data.avatar_url} className="w-full h-full object-cover" alt="avatar" />
         ) : (
@@ -103,8 +102,9 @@ function App() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [cards, setCards] = useState([]); 
   const [loading, setLoading] = useState(true);
-
-  const CUSTOMER_SERVICE_WECHAT = "Kiwi_Admin_001";
+  
+  // 状态：客服微信号
+  const [wechatId, setWechatId] = useState('Kiwi_Admin_001');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -116,8 +116,17 @@ function App() {
       setSession(session);
       if (session) checkProfile(session.user.id);
     });
+
+    // === 读取数据库配置 ===
+    fetchConfig();
+
     return () => subscription.unsubscribe();
   }, []);
+
+  async function fetchConfig() {
+    const { data } = await supabase.from('app_config').select('value').eq('key', 'service_wechat').single();
+    if (data && data.value) setWechatId(data.value);
+  }
 
   async function checkProfile(userId) {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
@@ -154,8 +163,8 @@ function App() {
   const isVip = () => userProfile?.vip_expiry && new Date(userProfile.vip_expiry) > new Date();
 
   const handleContactSupport = () => {
-    alert(`请添加客服微信充值/开通VIP：\n\n${CUSTOMER_SERVICE_WECHAT}\n\n(点击确定自动复制)`);
-    navigator.clipboard.writeText(CUSTOMER_SERVICE_WECHAT);
+    alert(`请添加客服微信充值/开通VIP：\n\n${wechatId}\n\n(点击确定自动复制)`);
+    navigator.clipboard.writeText(wechatId);
   };
 
   const handleSwipe = async (direction) => {
@@ -253,6 +262,7 @@ function App() {
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
       <Header onOpenProfile={() => setShowProfile(true)} />
       
+      {/* 卡片区域：保持原样 */}
       <div className="w-full flex flex-col justify-center items-center relative px-4" style={{ height: '55vh', marginTop: '80px' }}>
         <AnimatePresence>
           {cards.slice(currentIndex, currentIndex + 2).reverse().map((card, i) => {
@@ -270,15 +280,22 @@ function App() {
         </AnimatePresence>
       </div>
 
-      <div className="fixed bottom-8 left-0 right-0 max-w-md mx-auto px-12 flex items-center justify-between z-20 pointer-events-auto">
+      {/* === 修改点 2: 按钮大幅上移 (bottom-36) === */}
+      <div className="fixed bottom-36 left-0 right-0 max-w-md mx-auto px-12 flex items-center justify-between z-20 pointer-events-auto">
         <button onClick={() => handleSwipe('left')} className="w-16 h-16 rounded-full bg-white shadow-xl border border-gray-200 text-gray-400 flex items-center justify-center hover:bg-gray-50 active:scale-95 transition-all"><X size={32} /></button>
         <button onClick={() => handleSwipe('right')} className={`w-16 h-16 rounded-full shadow-xl flex items-center justify-center text-white active:scale-95 transition-all ${isUserVip && !isJob ? 'bg-yellow-500 shadow-yellow-200' : 'bg-blue-600 shadow-blue-200'}`}>
           {isJob ? <Heart size={30} fill="white" /> : isUserVip ? <Crown size={30} fill="white" /> : <DollarSign size={30} />}
         </button>
       </div>
 
+      {/* === 修改点 3: 底部广告位占位符 === */}
+      <div className="fixed bottom-4 left-4 right-4 max-w-md mx-auto h-24 bg-gray-200 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 z-10">
+        <Megaphone size={24} className="mb-1" />
+        <span className="text-xs font-medium">广告位招租</span>
+      </div>
+
       {userProfile.role === 'boss' && (
-        <button onClick={() => setShowPostJob(true)} className="fixed bottom-28 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-[999] hover:scale-105 transition-transform"><Plus size={28} /></button>
+        <button onClick={() => setShowPostJob(true)} className="fixed bottom-36 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-[999] hover:scale-105 transition-transform"><Plus size={28} /></button>
       )}
     </div>
   );

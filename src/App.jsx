@@ -87,7 +87,7 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   // 🔴 您的客服微信号 (请在这里修改)
-  const CUSTOMER_SERVICE_WECHAT = "Kiwi_Admin_001";
+  const CUSTOMER_SERVICE_WECHAT = "Thismour";
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {

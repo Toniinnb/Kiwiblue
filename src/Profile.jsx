@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import { X, Lock, Phone, Loader2, ShieldAlert, ChevronRight, Gift, Copy, Crown, User, Building2 } from 'lucide-react';
-import AvatarUpload from './AvatarUpload'; // 引入组件
+import AvatarUpload from './AvatarUpload'; 
 
 export default function Profile({ session, userProfile, onClose, onLogout, onProfileUpdate }) {
   const [activeTab, setActiveTab] = useState('info'); 
@@ -10,12 +10,20 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const [contacts, setContacts] = useState([]);
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [selectedWorker, setSelectedWorker] = useState(null);
-
-  const CUSTOMER_SERVICE_WECHAT = "Kiwi_Admin_001";
+  
+  // 状态：微信号
+  const [wechatId, setWechatId] = useState('Kiwi_Admin_001');
 
   useEffect(() => {
     if (userProfile.role === 'boss') fetchContacts();
+    // 读取配置
+    fetchConfig();
   }, []);
+
+  async function fetchConfig() {
+    const { data } = await supabase.from('app_config').select('value').eq('key', 'service_wechat').single();
+    if (data && data.value) setWechatId(data.value);
+  }
 
   const fetchContacts = async () => {
     setLoadingContacts(true);
@@ -28,11 +36,10 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     setLoadingContacts(false);
   };
 
-  // 修改头像逻辑
   const handleAvatarUpdate = async (newUrl) => {
     const { error } = await supabase.from('profiles').update({ avatar_url: newUrl }).eq('id', session.user.id);
     if (error) alert("头像更新失败");
-    else await onProfileUpdate(); // 刷新本地数据
+    else await onProfileUpdate(); 
   };
 
   const handleUpdatePassword = async () => {
@@ -45,11 +52,10 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   };
 
   const handleContactSupport = () => {
-    alert(`请添加客服微信开通 VIP：\n\n${CUSTOMER_SERVICE_WECHAT}\n\n(点击确定自动复制)`);
-    navigator.clipboard.writeText(CUSTOMER_SERVICE_WECHAT);
+    alert(`请添加客服微信开通 VIP：\n\n${wechatId}\n\n(点击确定自动复制)`);
+    navigator.clipboard.writeText(wechatId);
   };
 
-  // 详情页显示真实头像
   if (selectedWorker) {
     return (
       <div className="fixed inset-0 z-[60] bg-white flex flex-col animate-slide-in-right">
@@ -59,14 +65,11 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
         </div>
         <div className="p-6 flex-1 overflow-y-auto bg-gray-50">
           <div className="bg-white rounded-2xl p-6 shadow-sm text-center mb-6">
-             {/* 详情页大头像 */}
              <div className="w-24 h-24 mx-auto mb-4">
                {selectedWorker.avatar_url ? (
                  <img src={selectedWorker.avatar_url} className="w-full h-full rounded-full object-cover border-4 border-gray-50 shadow-md" />
                ) : (
-                 <div className="w-full h-full bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-3xl">
-                   {selectedWorker.name?.[0]}
-                 </div>
+                 <div className="w-full h-full bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-3xl">{selectedWorker.name?.[0]}</div>
                )}
              </div>
              <h3 className="text-2xl font-bold text-gray-900">{selectedWorker.name}</h3>
@@ -90,32 +93,15 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="bg-white rounded-2xl p-6 shadow-sm mb-6 text-center relative">
-          
-          {/* 头像上传组件 */}
           <div className="mb-3 flex justify-center">
-            <AvatarUpload 
-              url={userProfile.avatar_url} 
-              onUpload={handleAvatarUpdate}
-              role={userProfile.role}
-              size={80}
-            />
+            <AvatarUpload url={userProfile.avatar_url} onUpload={handleAvatarUpdate} role={userProfile.role} size={80} />
           </div>
-
           <h3 className="text-xl font-bold text-gray-900">{userProfile?.name}</h3>
           <p className="text-gray-500 text-sm mt-1 mb-2">{userProfile?.role === 'boss' ? '老板 / 雇主' : '工友 / 求职者'}</p>
           
+          {userProfile?.role === 'boss' && <div className="inline-block px-4 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-bold mb-4">余额: {userProfile.credits || 0} 币</div>}
           {userProfile?.role === 'boss' && (
-             <div className="inline-block px-4 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-bold mb-4">
-               余额: {userProfile.credits || 0} 币
-             </div>
-          )}
-
-          {userProfile?.role === 'boss' && (
-             <div className="mb-6">
-               <button onClick={handleContactSupport} className="bg-gray-900 text-yellow-400 px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-gray-300 flex items-center gap-2 mx-auto animate-pulse active:scale-95 transition-transform">
-                 <Crown size={16} /> 开通 VIP 无限刷
-               </button>
-             </div>
+             <div className="mb-6"><button onClick={handleContactSupport} className="bg-gray-900 text-yellow-400 px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-gray-300 flex items-center gap-2 mx-auto animate-pulse active:scale-95 transition-transform"><Crown size={16} /> 开通 VIP 无限刷</button></div>
           )}
           
           <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-100 rounded-xl p-4 text-left">
@@ -154,7 +140,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
             {contacts.map(worker => (
                 <div key={worker.id} onClick={() => setSelectedWorker(worker)} className="bg-white p-4 rounded-xl shadow-sm flex justify-between items-center cursor-pointer">
                   <div className="flex items-center gap-3">
-                     {/* 列表小头像 */}
                      <div className="w-10 h-10 rounded-full bg-gray-100 overflow-hidden">
                        {worker.avatar_url ? <img src={worker.avatar_url} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-gray-400 font-bold">{worker.name?.[0]}</div>}
                      </div>

@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import Login from './Login';
 import Onboarding from './Onboarding';
-import PostJob from './PostJob'; // 新增
-import Profile from './Profile'; // 新增
-import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, AlertTriangle, ShieldAlert } from 'lucide-react';
+import PostJob from './PostJob'; 
+import Profile from './Profile'; 
+import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, LogOut } from 'lucide-react';
 
 const cardStyle = {
   boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
@@ -26,7 +26,6 @@ const Header = ({ onOpenProfile }) => (
       </div>
       <span style={{fontSize: '18px', fontWeight: 'bold', color: '#111'}}>KiwiBlue</span>
     </div>
-    {/* 个人中心入口 */}
     <button onClick={onOpenProfile} className="p-2 bg-gray-100 rounded-full text-gray-600 hover:bg-gray-200">
       <User size={20} />
     </button>
@@ -44,16 +43,14 @@ function App() {
   const [loadingSession, setLoadingSession] = useState(true);
   const [userProfile, setUserProfile] = useState(null); 
   
-  // 页面状态
   const [showPostJob, setShowPostJob] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   
-  // 数据状态
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [cards, setCards] = useState([]); // 统一叫 cards，不管里面是人还是工作
+  const [cards, setCards] = useState([]); 
   const [loadingData, setLoadingData] = useState(false);
 
-  // 1. 检查 Session & Profile
+  // 1. 检查 Session
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -70,34 +67,36 @@ function App() {
   }, []);
 
   async function checkProfile(userId) {
-    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    // 增加 .maybeSingle() 防止报错
+    const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
     if (data) setUserProfile(data);
     setLoadingSession(false);
   }
 
-  // 2. 抓取数据 (核心逻辑)
+  // 2. 抓取数据
   const fetchData = async () => {
     if (!session || !userProfile) return;
     setLoadingData(true);
     
-    // 如果我是工友 -> 我看 jobs 表
-    if (userProfile.role === 'worker') {
-      const { data } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
-      setCards(data || []);
-    } 
-    // 如果我是老板 -> 我看 profiles 表 (只看 worker)
-    else {
-      const { data } = await supabase.from('profiles')
-        .select('*')
-        .eq('role', 'worker')
-        .neq('status', 'busy') // 不看忙碌的
-        .order('created_at', { ascending: false });
-      setCards(data || []);
+    try {
+      if (userProfile.role === 'worker') {
+        const { data } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
+        setCards(data || []);
+      } 
+      else {
+        const { data } = await supabase.from('profiles')
+          .select('*')
+          .eq('role', 'worker')
+          .neq('status', 'busy') 
+          .order('updated_at', { ascending: false }); // 改用 updated_at 排序
+        setCards(data || []);
+      }
+    } catch (error) {
+      console.error("抓取数据出错:", error);
     }
     setLoadingData(false);
   };
 
-  // 当资料加载好，或者发完新帖后，重新抓取数据
   useEffect(() => {
     fetchData();
   }, [userProfile]);
@@ -106,6 +105,7 @@ function App() {
     await supabase.auth.signOut();
     setUserProfile(null);
     setShowProfile(false);
+    window.location.reload(); // 强制刷新，解决一切状态卡死
   };
 
   const handleSwipe = (direction) => {
@@ -113,30 +113,42 @@ function App() {
     if (currentIndex < cards.length) setCurrentIndex(curr => curr + 1);
   };
 
-  // === 渲染逻辑 ===
+  // === 紧急救援按钮 (防止白屏卡死) ===
+  const EmergencyLogout = () => (
+    <button 
+      onClick={handleLogout} 
+      className="fixed top-20 right-4 z-50 bg-red-100 text-red-500 text-xs px-2 py-1 rounded border border-red-200 opacity-50 hover:opacity-100"
+    >
+      遇到问题？点此强制登出
+    </button>
+  );
 
   if (loadingSession) return <div className="h-screen flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-600" /></div>;
   if (!session) return <Login />;
   if (!userProfile) return <Onboarding session={session} onComplete={() => checkProfile(session.user.id)} />;
 
-  // 弹窗层
   if (showPostJob) return <PostJob session={session} onClose={() => setShowPostJob(false)} onPostSuccess={fetchData} />;
-  if (showProfile) return <Profile session={session} userProfile={userProfile} onClose={() => setShowProfile(false)} onLogout={handleLogout} />;
+  
+  // 修复点：传入 checkProfile 给 Profile 组件，实现状态刷新
+  if (showProfile) return <Profile session={session} userProfile={userProfile} onClose={() => setShowProfile(false)} onLogout={handleLogout} onProfileUpdate={() => checkProfile(session.user.id)} />;
 
-  // 刷完了
   const currentCard = cards[currentIndex];
 
-  if (loadingData) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-blue-600" /></div>;
+  if (loadingData) return (
+    <div className="h-screen flex items-center justify-center">
+      <EmergencyLogout />
+      <Loader2 className="animate-spin text-blue-600" />
+    </div>
+  );
 
   if (!currentCard) {
     return (
       <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center">
+        <EmergencyLogout />
         <CheckCircle2 size={64} className="text-gray-300 mb-4" />
         <h2 className="text-xl font-bold text-gray-800">刷完了</h2>
         <p className="text-gray-500 mt-2 mb-6">暂时没有更多匹配。</p>
         <button onClick={() => setCurrentIndex(0)} className="px-6 py-2 bg-blue-600 text-white rounded-full font-medium">从头再刷一次</button>
-        
-        {/* 老板特权按钮 */}
         {userProfile.role === 'boss' && (
            <button onClick={() => setShowPostJob(true)} className="mt-8 flex items-center gap-2 text-blue-600 font-bold bg-blue-50 px-6 py-3 rounded-xl">
              <Plus size={20} /> 发布新招工
@@ -146,25 +158,49 @@ function App() {
     );
   }
 
-  // 区分显示内容
-  const isViewingJob = userProfile.role === 'worker'; // 我是工友，正在看工作
-  // 核心隐私保护：如果我是老板看工人，隐藏手机号
-  const displayTitle = isViewingJob ? currentCard.title : currentCard.intro?.split(' ')[0] || "工友"; // 标题显示工种
-  const displaySub = isViewingJob ? "招聘方" : currentCard.name; // 副标题显示名字
-  const displayPrice = isViewingJob ? currentCard.wage : `${currentCard.intro?.split(' ')?.[1] || '-'}`; // 价格
-  const displayTags = currentCard.tags || (currentCard.intro ? [currentCard.experience || '经验不限'] : []);
+  // === 核心修复区：数据清洗 ===
+  // 无论数据多烂，这里都不能报错
+  const isViewingJob = userProfile.role === 'worker';
+  
+  // 安全获取字段
+  const getCardTitle = () => {
+    if (isViewingJob) return currentCard.title || "招工";
+    // 老板看工人：解析 intro，如果 intro 为空或格式不对，显示默认
+    if (!currentCard.intro) return "工友";
+    return currentCard.intro.split(' ')?.[0] || "工友";
+  };
+
+  const getCardPrice = () => {
+    if (isViewingJob) return currentCard.wage || "面议";
+    // 工人薪资
+    if (!currentCard.intro) return "面议";
+    return currentCard.intro.split(' ')?.[1] || "面议";
+  };
+  
+  const getCardTags = () => {
+    // 确保 tags 永远是数组
+    const tags = currentCard.tags || [];
+    if (tags.length > 0) return tags;
+    // 如果没有 tags，尝试显示经验
+    return currentCard.experience ? [currentCard.experience] : [];
+  };
+
+  const displayTitle = getCardTitle();
+  const displaySub = isViewingJob ? "招聘方" : (currentCard.name || "匿名");
+  const displayPrice = getCardPrice();
+  const displayTags = getCardTags();
 
   return (
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
+      {/* 如果卡住了，屏幕右上角会有这个小小的红色救生圈 */}
+      <EmergencyLogout />
+      
       <Header onOpenProfile={() => setShowProfile(true)} />
 
       <div className="px-4 mt-[60px] h-[calc(100vh-160px)] flex flex-col justify-center">
         <div style={cardStyle}>
-          {/* 上半部分 */}
           <div className="h-3/5 relative bg-gray-200">
             <Avatar type={isViewingJob ? 'boss' : 'worker'} />
-            
-            {/* 隐私遮罩 (老板看工人时显示) */}
             {!isViewingJob && (
                <div className="absolute inset-0 bg-black/10 flex items-center justify-center">
                  <div className="bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-bold text-gray-600 shadow-sm flex gap-1">
@@ -172,7 +208,6 @@ function App() {
                  </div>
                </div>
             )}
-
             {currentCard.location && (
               <div className="absolute top-4 left-4 bg-black/40 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1">
                 <MapPin size={12} /> {currentCard.location}
@@ -180,14 +215,12 @@ function App() {
             )}
           </div>
 
-          {/* 下半部分 */}
           <div className="flex-1 p-5 flex flex-col">
             <div className="flex justify-between items-start">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900 leading-tight mb-1">{displayTitle}</h2>
                 <div className="flex items-center gap-2">
                   <p className="text-gray-500 text-lg font-medium">{displaySub}</p>
-                  {/* 简单的认证标 */}
                   {currentCard.is_verified ? <ShieldCheck size={16} className="text-green-500" /> : null}
                 </div>
               </div>
@@ -195,7 +228,7 @@ function App() {
             </div>
 
             <div className="flex flex-wrap gap-2 mt-4">
-              {Array.isArray(displayTags) && displayTags.map((tag, i) => (
+              {displayTags.map((tag, i) => (
                 <span key={i} className="px-2.5 py-1 bg-blue-50 text-blue-700 text-sm font-semibold rounded-md">
                   {tag}
                 </span>
@@ -209,7 +242,6 @@ function App() {
         </div>
       </div>
       
-      {/* 底部按钮 */}
       <div className="fixed bottom-6 left-0 right-0 max-w-md mx-auto px-10 flex items-center justify-between z-10">
         <button onClick={() => handleSwipe('left')} className="w-16 h-16 rounded-full bg-white shadow-lg border border-gray-100 flex items-center justify-center text-red-500">
           <X size={32} />
@@ -219,7 +251,6 @@ function App() {
         </button>
       </div>
 
-      {/* 老板的悬浮发帖按钮 */}
       {userProfile.role === 'boss' && (
         <button 
           onClick={() => setShowPostJob(true)}

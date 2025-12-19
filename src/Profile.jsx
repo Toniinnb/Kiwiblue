@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
-import { X, Lock, Phone, Loader2, ShieldAlert, ChevronRight, Gift, Copy } from 'lucide-react';
+import { X, Lock, Phone, Loader2, ShieldAlert, ChevronRight, Gift, Copy, Crown } from 'lucide-react';
 
 export default function Profile({ session, userProfile, onClose, onLogout, onProfileUpdate }) {
   const [activeTab, setActiveTab] = useState('info'); 
@@ -9,6 +9,9 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const [contacts, setContacts] = useState([]);
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [selectedWorker, setSelectedWorker] = useState(null);
+
+  // 🔴 您的客服微信号 (请在这里修改)
+  const CUSTOMER_SERVICE_WECHAT = "Kiwi_Admin_001";
 
   useEffect(() => {
     if (userProfile.role === 'boss') fetchContacts();
@@ -32,6 +35,12 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     alert(error ? error.message : "修改成功");
     if (!error) setNewPassword('');
     setPassLoading(false);
+  };
+
+  // 复制微信号逻辑
+  const handleContactSupport = () => {
+    alert(`请添加客服微信开通 VIP：\n\n${CUSTOMER_SERVICE_WECHAT}\n\n(点击确定自动复制)`);
+    navigator.clipboard.writeText(CUSTOMER_SERVICE_WECHAT);
   };
 
   if (selectedWorker) {
@@ -67,7 +76,25 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
         <div className="bg-white rounded-2xl p-6 shadow-sm mb-6 text-center relative">
           <div className="w-20 h-20 bg-blue-100 rounded-full mx-auto flex items-center justify-center text-blue-600 text-2xl font-bold mb-3">{userProfile?.name?.[0]}</div>
           <h3 className="text-xl font-bold text-gray-900">{userProfile?.name}</h3>
-          <p className="text-gray-500 text-sm mt-1 mb-4">{userProfile?.role === 'boss' ? '老板 / 雇主' : '工友 / 求职者'}</p>
+          <p className="text-gray-500 text-sm mt-1 mb-2">{userProfile?.role === 'boss' ? '老板 / 雇主' : '工友 / 求职者'}</p>
+          
+          {userProfile?.role === 'boss' && (
+             <div className="inline-block px-4 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-bold mb-4">
+               余额: {userProfile.credits || 0} 币
+             </div>
+          )}
+
+          {/* === 新增：VIP 购买按钮 === */}
+          {userProfile?.role === 'boss' && (
+             <div className="mb-6">
+               <button 
+                 onClick={handleContactSupport}
+                 className="bg-gray-900 text-yellow-400 px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-gray-300 flex items-center gap-2 mx-auto animate-pulse active:scale-95 transition-transform"
+               >
+                 <Crown size={16} /> 开通 VIP 无限刷
+               </button>
+             </div>
+          )}
           
           {/* 邀请奖励卡片 */}
           <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-100 rounded-xl p-4 text-left">
@@ -79,7 +106,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
             </p>
             <div className="bg-white/80 p-2 rounded-lg flex justify-between items-center border border-yellow-200">
               <span className="font-mono font-bold text-gray-600 ml-1">{userProfile.phone}</span>
-              <button onClick={() => alert("已复制！快去发给朋友吧")} className="text-xs bg-yellow-400 text-yellow-900 px-2 py-1 rounded font-bold flex items-center gap-1"><Copy size={12}/> 复制</button>
+              <button onClick={() => {navigator.clipboard.writeText(userProfile.phone); alert("已复制邀请码！");}} className="text-xs bg-yellow-400 text-yellow-900 px-2 py-1 rounded font-bold flex items-center gap-1"><Copy size={12}/> 复制</button>
             </div>
           </div>
         </div>

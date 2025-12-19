@@ -1,20 +1,36 @@
 import React, { useState } from 'react';
 import { supabase } from './supabase';
-import { X, LogOut, Lock, UserCog, ShieldAlert, Loader2 } from 'lucide-react';
+import { X, LogOut, Lock, UserCog, ShieldAlert, Loader2, RefreshCw } from 'lucide-react';
 
-export default function Profile({ session, userProfile, onClose, onLogout }) {
-  const [activeTab, setActiveTab] = useState('info'); // info 或 password
-  
-  // 修改密码相关状态
+export default function Profile({ session, userProfile, onClose, onLogout, onProfileUpdate }) {
+  const [activeTab, setActiveTab] = useState('info'); 
   const [newPassword, setNewPassword] = useState('');
   const [passLoading, setPassLoading] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(false);
+
+  // === 修复：切换找活/忙碌状态 ===
+  const handleToggleStatus = async () => {
+    setStatusLoading(true);
+    const newStatus = userProfile.status === 'busy' ? 'active' : 'busy';
+    
+    const { error } = await supabase
+      .from('profiles')
+      .update({ status: newStatus })
+      .eq('id', session.user.id);
+
+    if (error) {
+      alert("状态更新失败: " + error.message);
+    } else {
+      // 成功后，通知父组件刷新资料
+      await onProfileUpdate(); 
+    }
+    setStatusLoading(false);
+  };
 
   const handleUpdatePassword = async () => {
     if (!newPassword || newPassword.length < 6) return alert("密码至少需要6位");
     setPassLoading(true);
-    
     const { error } = await supabase.auth.updateUser({ password: newPassword });
-    
     if (error) alert("修改失败: " + error.message);
     else {
       alert("密码修改成功！下次请用新密码登录。");
@@ -25,7 +41,6 @@ export default function Profile({ session, userProfile, onClose, onLogout }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-gray-100 flex flex-col animate-slide-in-right">
-      {/* 顶部导航 */}
       <div className="bg-white px-6 py-4 flex justify-between items-center shadow-sm">
         <h2 className="text-xl font-bold text-gray-900">个人中心</h2>
         <button onClick={onClose} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200">
@@ -34,7 +49,6 @@ export default function Profile({ session, userProfile, onClose, onLogout }) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {/* 个人信息卡片 */}
         <div className="bg-white rounded-2xl p-6 shadow-sm mb-6 text-center">
           <div className="w-20 h-20 bg-blue-100 rounded-full mx-auto flex items-center justify-center text-blue-600 text-2xl font-bold mb-3">
             {userProfile?.name?.[0] || "我"}
@@ -45,7 +59,6 @@ export default function Profile({ session, userProfile, onClose, onLogout }) {
           </p>
           <p className="text-gray-400 text-xs mt-1">{session.user.email}</p>
           
-          {/* 认证状态提示 */}
           {!userProfile?.is_verified && (
             <div className="mt-4 bg-orange-50 text-orange-600 text-xs px-3 py-2 rounded-lg flex items-center justify-center gap-2">
               <ShieldAlert size={14} />
@@ -54,7 +67,6 @@ export default function Profile({ session, userProfile, onClose, onLogout }) {
           )}
         </div>
 
-        {/* 菜单切换 */}
         <div className="flex bg-gray-200 p-1 rounded-xl mb-6">
           <button 
             onClick={() => setActiveTab('info')}
@@ -70,7 +82,6 @@ export default function Profile({ session, userProfile, onClose, onLogout }) {
           </button>
         </div>
 
-        {/* 内容区域 */}
         {activeTab === 'info' ? (
           <div className="space-y-4">
             <div className="bg-white p-4 rounded-xl shadow-sm">
@@ -82,12 +93,18 @@ export default function Profile({ session, userProfile, onClose, onLogout }) {
               <div className="bg-white p-4 rounded-xl shadow-sm flex justify-between items-center">
                 <div>
                   <div className="text-xs text-gray-400 mb-1">求职状态</div>
-                  <div className="text-gray-900 font-medium">
-                    {userProfile?.status === 'busy' ? '🚫 已忙碌 (不接单)' : '✅ 找活中 (可接单)'}
+                  <div className={`font-bold flex items-center gap-2 ${userProfile?.status === 'busy' ? 'text-gray-500' : 'text-green-600'}`}>
+                    {userProfile?.status === 'busy' ? '🚫 已忙碌' : '✅ 找活中'}
                   </div>
                 </div>
-                {/* 状态切换按钮 (未来对接API) */}
-                <button className="text-blue-600 text-sm font-bold">切换</button>
+                <button 
+                  onClick={handleToggleStatus}
+                  disabled={statusLoading}
+                  className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-sm font-bold hover:bg-blue-100 transition-colors flex items-center gap-1"
+                >
+                  {statusLoading && <Loader2 size={14} className="animate-spin" />}
+                  切换
+                </button>
               </div>
             )}
           </div>
@@ -99,7 +116,7 @@ export default function Profile({ session, userProfile, onClose, onLogout }) {
             <div>
               <input 
                 type="password" 
-                placeholder="请输入新密码 (至少6位)"
+                placeholder="新密码 (至少6位)"
                 className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}

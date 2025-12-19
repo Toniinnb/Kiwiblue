@@ -6,10 +6,15 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [agreed, setAgreed] = useState(false);
   const [statusText, setStatusText] = useState('登录 / 注册');
 
   const handleSmartAuth = async (e) => {
     e.preventDefault();
+    
+    // 修改了这里的拦截提示，更严肃
+    if (!agreed) return alert("请先勾选同意【已满18岁并遵守服务条款】");
+    
     if (!email || !password) return alert("请填写账号和密码");
     
     setLoading(true);
@@ -22,7 +27,6 @@ export default function Login() {
     });
 
     if (signUpError) {
-      // 2. 如果报错说“用户已存在”，自动转去登录
       if (signUpError.message.includes("already registered") || signUpError.status === 400 || signUpError.status === 422) {
         setStatusText('检测到老友，正在登录...');
         
@@ -47,14 +51,8 @@ export default function Login() {
   };
 
   return (
-    /* 关键修复：
-       1. min-h-screen: 强制高度至少为屏幕高度
-       2. w-screen: 强制宽度为屏幕宽度
-       3. fixed inset-0: 像钉子一样钉在屏幕四角，防止滑动
-    */
     <div className="fixed inset-0 min-h-screen w-screen bg-gray-900 flex flex-col items-center justify-center p-6 overflow-hidden">
       
-      {/* 背景图 */}
       <div 
         className="absolute inset-0 z-0 opacity-40"
         style={{
@@ -64,7 +62,6 @@ export default function Login() {
         }}
       />
 
-      {/* 登录框主体 */}
       <div className="z-10 w-full max-w-sm bg-white/10 backdrop-blur-md p-8 rounded-3xl border border-white/20 shadow-2xl">
         <div className="flex justify-center mb-6">
           <div className="p-3 rounded-xl bg-blue-600 text-white shadow-lg shadow-blue-500/50">
@@ -76,7 +73,7 @@ export default function Login() {
           KiwiBlue 工友
         </h2>
         <p className="text-gray-300 text-center mb-8 text-sm">
-          自动识别注册或登录
+          新西兰建筑行业直聘平台
         </p>
 
         <form onSubmit={handleSmartAuth} className="space-y-5">
@@ -101,6 +98,20 @@ export default function Login() {
             />
           </div>
 
+          {/* === 核心修改部分 === */}
+          <div className="flex items-start gap-3 pl-1">
+            <input 
+              type="checkbox" 
+              id="age-check"
+              className="mt-1 w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 shrink-0"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+            />
+            <label htmlFor="age-check" className="text-sm text-gray-200 select-none cursor-pointer leading-tight">
+              我已满 18 岁，登录即代表同意并遵守 <span className="underline text-blue-300">KiwiBlue 用户条款与隐私协议</span>
+            </label>
+          </div>
+
           <button
             type="submit"
             disabled={loading}
@@ -113,7 +124,7 @@ export default function Login() {
 
         <div className="mt-6 text-center">
           <p className="text-xs text-gray-400">
-            点击按钮即代表同意 <span className="underline">服务条款</span>
+            KiwiBlue NZ Limited &copy; 2024
           </p>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from './supabase';
-import { User, Building2, Hammer, Loader2, Gift, ArrowLeft } from 'lucide-react'; // 引入 ArrowLeft
+import { User, Building2, Hammer, Loader2, Gift, ArrowLeft } from 'lucide-react';
+import AvatarUpload from './AvatarUpload'; // 引入上传组件
 
 export default function Onboarding({ session, onComplete }) {
   const [step, setStep] = useState(1); 
@@ -9,6 +10,7 @@ export default function Onboarding({ session, onComplete }) {
 
   const [formData, setFormData] = useState({
     name: '',
+    avatar_url: '', // 新增
     phone: '',
     wechat: '',
     jobType: '', 
@@ -34,6 +36,7 @@ export default function Onboarding({ session, onComplete }) {
       id: session.user.id,
       role: role,
       name: formData.name,
+      avatar_url: formData.avatar_url, // 保存头像
       phone: formData.phone,
       wechat: formData.wechat,
       org_type: role === 'boss' ? formData.orgType : null,
@@ -89,7 +92,6 @@ export default function Onboarding({ session, onComplete }) {
   return (
     <div className="min-h-screen bg-white px-6 py-10 animate-slide-up">
       <div className="max-w-md mx-auto">
-        {/* === 新增：返回按钮 === */}
         <div className="flex items-center gap-3 mb-6">
           <button onClick={() => setStep(1)} className="p-2 -ml-2 rounded-full hover:bg-gray-100 text-gray-600">
             <ArrowLeft size={24} />
@@ -98,6 +100,16 @@ export default function Onboarding({ session, onComplete }) {
         </div>
         
         <form onSubmit={handleSubmit} className="space-y-5">
+          {/* 头像上传区 */}
+          <div className="flex justify-center mb-6">
+            <AvatarUpload 
+              url={formData.avatar_url} 
+              onUpload={(url) => setFormData({...formData, avatar_url: url})} 
+              role={role}
+              size={100}
+            />
+          </div>
+
           <div><label className="block text-sm font-medium text-gray-700 mb-1">怎么称呼您？</label><input type="text" required className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
 
           {role === 'worker' && (

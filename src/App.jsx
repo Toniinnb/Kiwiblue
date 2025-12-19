@@ -5,11 +5,10 @@ import Onboarding from './Onboarding';
 import PostJob from './PostJob'; 
 import Profile from './Profile'; 
 import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown } from 'lucide-react';
-// 引入 AnimatePresence 以实现丝滑的离场动画
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 
 const Header = ({ onOpenProfile }) => (
-  <div style={{height: '56px', background: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'fixed', top: 0, width: '100%', zIndex: 40, borderBottom: '1px solid #eee', padding: '0 16px', maxWidth: '450px', left: '50%', transform: 'translateX(-50%)'}}>
+  <div style={{height: '56px', background: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'fixed', top: 0, width: '100%', zIndex: 50, borderBottom: '1px solid #eee', padding: '0 16px', maxWidth: '450px', left: '50%', transform: 'translateX(-50%)'}}>
     <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
       <div style={{padding: '6px', borderRadius: '8px', background: '#2563EB', color: 'white', display: 'flex'}}>
         <Hammer size={18} />
@@ -20,16 +19,15 @@ const Header = ({ onOpenProfile }) => (
   </div>
 );
 
-// === 核心：可拖拽的卡片组件 (优化版) ===
+// === 可拖拽卡片组件 ===
 const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
   const x = useMotionValue(0);
-  const rotate = useTransform(x, [-200, 200], [-15, 15]); // 增加旋转角度，更动感
+  const rotate = useTransform(x, [-200, 200], [-15, 15]); 
   const opacity = useTransform(x, [-200, -150, 0, 150, 200], [0, 1, 1, 1, 0]);
   const borderColor = useTransform(x, [-200, 0, 200], ['#ef4444', '#ffffff', userRole === 'worker' ? '#22c55e' : '#eab308']);
   
-  // 拖拽结束时的逻辑
   const handleDragEnd = (event, info) => {
-    const threshold = 100; // 滑动阈值
+    const threshold = 100; 
     if (info.offset.x > threshold) {
       onSwipe('right');
     } else if (info.offset.x < -threshold) {
@@ -45,52 +43,65 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
 
   return (
     <motion.div
-      drag="x" // 允许横向拖拽
-      dragSnapToOrigin={true} // 松手自动回弹 (除非飞走)
-      dragElastic={0.7} // 阻尼感
-      whileDrag={{ scale: 1.05, cursor: 'grabbing' }} // 拖拽时微微放大
+      drag="x" 
+      dragSnapToOrigin={true} 
+      dragElastic={0.7} 
+      whileDrag={{ scale: 1.05, cursor: 'grabbing' }} 
       style={{ x, rotate, opacity, position: 'absolute', width: '100%', height: '100%', zIndex: 100 - index }}
-      // === 核心：离场动画 ===
-      exit={{ 
-        x: x.get() < 0 ? -1000 : 1000, 
-        opacity: 0, 
-        transition: { duration: 0.4 } 
-      }}
+      exit={{ x: x.get() < 0 ? -1000 : 1000, opacity: 0, transition: { duration: 0.4 } }}
       onDragEnd={handleDragEnd}
-      className="bg-white rounded-[1.5rem] shadow-2xl overflow-hidden flex flex-col border-2 border-gray-100" // 移除之前的 h-[65vh] 改由父级控制
+      // === 修改点 1: 卡片容器样式 ===
+      // max-w-[340px]: 限制最大宽度，防止太大
+      // h-full: 高度由父容器控制，不再自己撑满
+      className="bg-white rounded-[1.5rem] shadow-2xl overflow-hidden flex flex-col border border-gray-100 w-full max-w-[340px]" 
     >
-      <motion.div style={{ borderColor }} className="absolute inset-0 border-[6px] rounded-[1.5rem] pointer-events-none z-50 transition-colors" />
+      <motion.div style={{ borderColor }} className="absolute inset-0 border-[4px] rounded-[1.5rem] pointer-events-none z-50 transition-colors" />
       
-      {/* 卡片上半部分 (图片/信息) */}
       <div className="h-3/5 relative bg-gray-200 pointer-events-none">
         <div className="w-full h-full bg-gradient-to-b from-gray-100 to-gray-200 flex justify-center items-center text-gray-400">
            {isJob ? <Building2 size={80} /> : <User size={80} />}
         </div>
+        
+        {/* === 修改点 2: VIP 移到左上角 === */}
         {!isJob && (
-            <div className="absolute inset-0 bg-black/10 flex items-center justify-center">
+            <div className="absolute top-4 left-4 z-20">
               {isVip ? (
-                <div className="bg-yellow-400 text-yellow-900 px-4 py-1.5 rounded-full text-sm font-bold shadow-lg flex items-center gap-1 animate-pulse"><Crown size={16} fill="currentColor" /> VIP 免扣费</div>
+                <div className="bg-yellow-400 text-yellow-900 px-3 py-1.5 rounded-full text-xs font-bold shadow-lg flex items-center gap-1 animate-pulse">
+                  <Crown size={14} fill="currentColor" /> VIP 免扣费
+                </div>
               ) : (
-                <div className="bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-bold text-gray-600 shadow-sm flex gap-1"><Lock size={14} /> 联系方式已隐藏</div>
+                <div className="bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-bold text-gray-600 shadow-sm flex items-center gap-1">
+                  <Lock size={12} /> 号码隐藏
+                </div>
               )}
             </div>
         )}
-        {data.location && <div className="absolute top-4 left-4 bg-black/40 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1"><MapPin size={12} /> {data.location}</div>}
-        <div className="absolute bottom-4 right-4 bg-orange-500/90 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 shadow-sm"><Flame size={12} fill="white" /> {data.popularity || 0} 热度</div>
+
+        {/* === 修改点 3: 地点移到右上角 (避免重叠) === */}
+        {data.location && (
+          <div className="absolute top-4 right-4 bg-black/40 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1">
+            <MapPin size={12} /> {data.location}
+          </div>
+        )}
+        
+        {/* 热度保持右下角 */}
+        <div className="absolute bottom-4 right-4 bg-orange-500/90 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 shadow-sm">
+           <Flame size={12} fill="white" /> {data.popularity || 0}
+        </div>
       </div>
 
-      {/* 卡片下半部分 (内容) */}
-      <div className="flex-1 p-6 flex flex-col pointer-events-none bg-white">
+      <div className="flex-1 p-5 flex flex-col pointer-events-none bg-white">
         <div className="flex justify-between items-start mb-2">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900 leading-tight mb-1">{displayTitle}</h2>
-            <div className="flex items-center gap-2"><p className="text-gray-500 text-lg font-medium">{displaySub}</p>{data.is_verified ? <ShieldCheck size={16} className="text-green-500" /> : null}</div>
+            <h2 className="text-xl font-bold text-gray-900 leading-tight mb-1">{displayTitle}</h2>
+            <div className="flex items-center gap-2"><p className="text-gray-500 text-sm font-medium">{displaySub}</p>{data.is_verified ? <ShieldCheck size={14} className="text-green-500" /> : null}</div>
           </div>
-          <div className="text-blue-600 font-bold text-2xl tracking-tight">{displayPrice}</div>
+          <div className="text-blue-600 font-bold text-xl tracking-tight">{displayPrice}</div>
         </div>
-        <div className="flex flex-wrap gap-2 mt-4">{displayTags.map((tag, i) => (<span key={i} className="px-3 py-1 bg-blue-50 text-blue-700 text-sm font-semibold rounded-lg">{tag}</span>))}</div>
-        <div className="mt-auto pt-4 flex items-center justify-center text-gray-300 text-sm font-medium">
-           {isJob ? '← 不感兴趣 · 感兴趣 →' : '← 下一个 · 解锁 →'}
+        <div className="flex flex-wrap gap-2 mt-2">{displayTags.slice(0,3).map((tag, i) => (<span key={i} className="px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-semibold rounded-lg">{tag}</span>))}</div>
+        {/* 底部提示语简化 */}
+        <div className="mt-auto pt-2 flex items-center justify-center text-gray-300 text-xs">
+           <p>左右滑动 或 点击下方按钮</p>
         </div>
       </div>
     </motion.div>
@@ -106,7 +117,6 @@ function App() {
   const [cards, setCards] = useState([]); 
   const [loading, setLoading] = useState(true);
 
-  // 🔴 您的客服微信号
   const CUSTOMER_SERVICE_WECHAT = "Kiwi_Admin_001";
 
   useEffect(() => {
@@ -156,7 +166,6 @@ function App() {
 
   const isVip = () => userProfile?.vip_expiry && new Date(userProfile.vip_expiry) > new Date();
 
-  // 复制微信号
   const handleContactSupport = () => {
     alert(`请添加客服微信充值/开通VIP：\n\n${CUSTOMER_SERVICE_WECHAT}\n\n(点击确定自动复制)`);
     navigator.clipboard.writeText(CUSTOMER_SERVICE_WECHAT);
@@ -165,10 +174,6 @@ function App() {
   const handleSwipe = async (direction) => {
     const currentCard = cards[currentIndex];
     
-    // 动画逻辑由 AnimatePresence 接管，这里只负责数据流
-    // 如果是弹窗确认失败的情况，我们需要“撤销”这次 currentIndex 的变动
-    // 但 DraggableCard 已经在飞了，所以老板模式下我们稍微特殊处理：先弹窗，确认后再飞
-
     if (direction === 'left') {
       setCurrentIndex(curr => curr + 1);
       return;
@@ -180,8 +185,7 @@ function App() {
         const used = userProfile.swipes_used_today || 0;
 
         if (used >= limit) {
-          alert(`今天查看次数已达上限 (${limit}次)！\n\n💡 邀请工友注册，奖励更多机会！`);
-          // 刷新页面重置卡片位置
+          alert(`查看次数已达上限！请邀请工友增加额度。`);
           window.location.reload(); 
           return;
         }
@@ -203,19 +207,12 @@ function App() {
         }
 
         const cost = calculateCost(currentCard);
-        // 注意：这里弹窗会打断动画，为了防止卡片飞走后又弹回来，
-        // 实际上最佳体验是：先弹窗，确定后，再允许组件飞走。
-        // 但目前架构下，我们允许先弹窗。如果用户取消，刷新页面恢复。
         const confirmUnlock = window.confirm(`解锁需扣 ${cost} 币，确认？`);
         
-        if (!confirmUnlock) {
-          window.location.reload();
-          return;
-        }
+        if (!confirmUnlock) return; // 按钮模式下，取消就直接不动，不用刷新
 
         if ((userProfile.credits || 0) < cost) {
-          alert("❌ 余额不足，请充值或开通 VIP 无限刷！");
-          window.location.reload();
+          alert("❌ 余额不足，请充值！");
           return;
         }
 
@@ -262,38 +259,31 @@ function App() {
           <button onClick={() => setShowProfile(true)} className="px-6 py-3 bg-white text-gray-700 border border-gray-200 rounded-xl font-medium hover:bg-gray-50">进入个人中心</button>
         </div>
         
-        {/* === 发布按钮修复 === */}
         {userProfile.role === 'boss' && (
-          <button 
-             onClick={() => setShowPostJob(true)} 
-             className="fixed bottom-24 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-[999] hover:scale-105 transition-transform"
-          >
-             <Plus size={28} />
-          </button>
+          <button onClick={() => setShowPostJob(true)} className="fixed bottom-24 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-[999] hover:scale-105 transition-transform"><Plus size={28} /></button>
         )}
       </div>
     );
   }
 
-  // 渲染卡片堆栈
+  const isJob = userProfile.role === 'worker';
+  const isUserVip = isVip();
+
   return (
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
       <Header onOpenProfile={() => setShowProfile(true)} />
       
-      {/* 卡片容器：居中、增加边距 */}
-      <div className="w-full h-full flex flex-col justify-center items-center relative px-4 pt-16 pb-24">
-        
-        {/* AnimatePresence 控制离场动画 */}
+      {/* === 修改点 1: 卡片容器高度减小，居中，留出上下空间 === */}
+      {/* h-[60vh] 意味着卡片只占屏幕 60% 高度，上下留白 */}
+      <div className="w-full flex flex-col justify-center items-center relative px-4" style={{ height: 'calc(100vh - 160px)', marginTop: '60px' }}>
         <AnimatePresence>
           {cards.slice(currentIndex, currentIndex + 2).reverse().map((card, i) => {
-             // 只有最上面这张卡片(currentIndex)需要动画
-             const isTop = i === 1; // 因为reverse了，数组最后一张在最上面
              return (
                <DraggableCard 
                   key={card.id} 
                   data={card} 
                   userRole={userProfile.role} 
-                  isVip={isVip()} 
+                  isVip={isUserVip} 
                   onSwipe={handleSwipe} 
                   index={i}
                />
@@ -302,22 +292,27 @@ function App() {
         </AnimatePresence>
       </div>
 
-      <div className="fixed bottom-6 left-0 right-0 max-w-md mx-auto px-10 flex items-center justify-between z-10 pointer-events-none">
-        <div className="text-gray-400 text-xs w-full text-center">
-          {userProfile.role === 'worker' ? 
-            `今日剩余查看: ${Math.max(0, (20 + (userProfile.swipe_quota_extra||0)) - (userProfile.swipes_used_today||0))} 次` : 
-            '按住卡片 左右拖拽'}
-        </div>
-      </div>
-      
-      {/* === 发布按钮修复 (Z-Index 999) === */}
-      {userProfile.role === 'boss' && (
+      {/* === 修改点 4: 底部按钮回归 (点赞/点叉) === */}
+      <div className="fixed bottom-8 left-0 right-0 max-w-md mx-auto px-12 flex items-center justify-between z-20 pointer-events-auto">
+        {/* 左边的 Pass 按钮 */}
         <button 
-           onClick={() => setShowPostJob(true)} 
-           className="fixed bottom-24 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-[999] hover:scale-105 transition-transform"
+          onClick={() => handleSwipe('left')} 
+          className="w-16 h-16 rounded-full bg-white shadow-xl border border-gray-200 text-gray-400 flex items-center justify-center hover:bg-gray-50 active:scale-95 transition-all"
         >
-           <Plus size={28} />
+          <X size={32} />
         </button>
+
+        {/* 右边的 Like/Unlock 按钮 */}
+        <button 
+          onClick={() => handleSwipe('right')} 
+          className={`w-16 h-16 rounded-full shadow-xl flex items-center justify-center text-white active:scale-95 transition-all ${isUserVip && !isJob ? 'bg-yellow-500 shadow-yellow-200' : 'bg-blue-600 shadow-blue-200'}`}
+        >
+          {isJob ? <Heart size={30} fill="white" /> : isUserVip ? <Crown size={30} fill="white" /> : <DollarSign size={30} />}
+        </button>
+      </div>
+
+      {userProfile.role === 'boss' && (
+        <button onClick={() => setShowPostJob(true)} className="fixed bottom-28 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-[999] hover:scale-105 transition-transform"><Plus size={28} /></button>
       )}
     </div>
   );

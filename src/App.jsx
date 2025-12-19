@@ -4,7 +4,7 @@ import Login from './Login';
 import Onboarding from './Onboarding';
 import PostJob from './PostJob'; 
 import Profile from './Profile'; 
-import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame } from 'lucide-react'; // 引入 Flame 图标
+import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown } from 'lucide-react';
 
 const cardStyle = {
   boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
@@ -67,32 +67,20 @@ function App() {
     setLoadingSession(false);
   }
 
-  // === 核心修复：数据抓取逻辑 ===
   const fetchData = async () => {
     if (!session || !userProfile) return;
     setLoadingData(true);
     try {
       if (userProfile.role === 'worker') {
-        // 工友看工作：全部显示
         const { data } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
         setCards(data || []);
       } else {
-        // 老板看工人：先查我已经解锁了谁
         const { data: unlocked } = await supabase.from('contacts').select('worker_id').eq('boss_id', session.user.id);
         const unlockedIds = unlocked ? unlocked.map(u => u.worker_id) : [];
-
-        // 构建查询：排除忙碌的 + 排除已解锁的
-        let query = supabase.from('profiles')
-          .select('*')
-          .eq('role', 'worker')
-          .neq('status', 'busy')
-          .order('updated_at', { ascending: false });
-
-        // 如果有已解锁的，把它排除掉
+        let query = supabase.from('profiles').select('*').eq('role', 'worker').neq('status', 'busy').order('updated_at', { ascending: false });
         if (unlockedIds.length > 0) {
           query = query.not('id', 'in', `(${unlockedIds.join(',')})`);
         }
-
         const { data } = await query;
         setCards(data || []);
       }
@@ -105,6 +93,12 @@ function App() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     window.location.reload();
+  };
+
+  // === 计算是否 VIP ===
+  const isVip = () => {
+    if (!userProfile?.vip_expiry) return false;
+    return new Date(userProfile.vip_expiry) > new Date(); // 过期时间大于现在
   };
 
   const calculateCost = (card) => {
@@ -128,36 +122,51 @@ function App() {
     }
 
     if (direction === 'right') {
-      // === 人气值逻辑：右滑就 +1 ===
+      // === 场景 A: 工友滑工作 (无感交互) ===
       if (userProfile.role === 'worker') {
-        // 工人滑工作：工作人气 +1
-        await supabase.from('jobs').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id);
-        alert("✅ 已发送意向！");
+        // 不弹窗，直接后台记录，滑走
+        supabase.from('jobs').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id);
         setCurrentIndex(curr => curr + 1);
+        return;
       } 
+      
+      // === 场景 B: 老板滑工友 (VIP逻辑) ===
       else if (userProfile.role === 'boss') {
+        
+        // 1. 如果是 VIP，直接起飞
+        if (isVip()) {
+           // 不扣费，不确认，直接解锁
+           await supabase.from('contacts').insert({ boss_id: session.user.id, worker_id: currentCard.id });
+           await supabase.from('profiles').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id);
+           
+           // VIP 提示可以更轻一点，甚至不提示，这里为了反馈感保留一个小提示
+           // alert("👑 VIP 自动解锁成功！"); 
+           // 甚至连这个alert也可以去掉，直接滑走，老板体验更爽
+           
+           checkProfile(session.user.id);
+           setCurrentIndex(curr => curr + 1);
+           return;
+        }
+
+        // 2. 如果是普通老板，走原来的扣费逻辑
         const cost = calculateCost(currentCard);
         const confirmUnlock = window.confirm(`经验：${currentCard.experience || '入门'}，解锁需扣 ${cost} 币。\n余额：${userProfile.credits || 0}\n确认解锁？`);
         
         if (!confirmUnlock) return; 
 
         if ((userProfile.credits || 0) < cost) {
-          alert("❌ 余额不足！");
+          alert("❌ 余额不足，请充值或开通 VIP 无限刷！");
           return;
         }
 
-        // 扣费 + 记录
         const { error: creditError } = await supabase.from('profiles').update({ credits: userProfile.credits - cost }).eq('id', session.user.id);
         if (creditError) return alert("交易失败");
 
         await supabase.from('contacts').insert({ boss_id: session.user.id, worker_id: currentCard.id });
-        
-        // 老板滑工人：工人人气 +1
         await supabase.from('profiles').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id);
 
         alert("🔓 解锁成功！请去个人中心查看详情。");
         checkProfile(session.user.id);
-        // 重要：解锁后直接跳下一个，因为已经买到手了，去通讯录看就行
         setCurrentIndex(curr => curr + 1);
       }
     }
@@ -177,7 +186,6 @@ function App() {
 
   if (loadingData) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-blue-600" /></div>;
 
-  // === 刷完了页面 (修复：增加“进入个人中心”按钮) ===
   if (!currentCard) {
     return (
       <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center">
@@ -185,14 +193,12 @@ function App() {
         <Header onOpenProfile={() => setShowProfile(true)} />
         <CheckCircle2 size={64} className="text-gray-300 mb-4" />
         <h2 className="text-xl font-bold text-gray-800">刷完了</h2>
-        <p className="text-gray-500 mt-2 mb-6">暂时没有更多{userProfile.role === 'boss' ? '工友' : '工作'}。</p>
+        <p className="text-gray-500 mt-2 mb-6">暂时没有更多匹配。</p>
         
         <div className="flex flex-col gap-3 w-full max-w-xs">
           <button onClick={() => { setCurrentIndex(0); fetchData(); }} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium shadow-lg shadow-blue-200">
             刷新看看
           </button>
-          
-          {/* 新增：直达个人中心 */}
           <button onClick={() => setShowProfile(true)} className="px-6 py-3 bg-white text-gray-700 border border-gray-200 rounded-xl font-medium hover:bg-gray-50">
             进入个人中心
           </button>
@@ -212,8 +218,10 @@ function App() {
   const displaySub = isViewingJob ? "招聘方" : (currentCard.name || "匿名");
   const displayPrice = isViewingJob ? (currentCard.wage || "面议") : (currentCard.intro?.split(' ')?.[1] || "面议");
   const displayTags = currentCard.tags || (currentCard.experience ? [currentCard.experience] : []);
-  // 获取人气值 (如果数据库还没这列，默认0)
   const popularity = currentCard.popularity || 0;
+  
+  // VIP 状态检查
+  const userIsVip = isVip();
 
   return (
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
@@ -226,9 +234,15 @@ function App() {
             <Avatar type={isViewingJob ? 'boss' : 'worker'} />
             {!isViewingJob && (
                <div className="absolute inset-0 bg-black/10 flex items-center justify-center">
-                 <div className="bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-bold text-gray-600 shadow-sm flex gap-1">
-                   <Lock size={14} /> 联系方式已隐藏
-                 </div>
+                 {userIsVip ? (
+                   <div className="bg-yellow-400 text-yellow-900 px-4 py-1.5 rounded-full text-sm font-bold shadow-lg flex items-center gap-1 animate-pulse">
+                     <Crown size={16} fill="currentColor" /> VIP 免扣费查看
+                   </div>
+                 ) : (
+                   <div className="bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-bold text-gray-600 shadow-sm flex gap-1">
+                     <Lock size={14} /> 联系方式已隐藏
+                   </div>
+                 )}
                </div>
             )}
             {currentCard.location && (
@@ -236,7 +250,6 @@ function App() {
                 <MapPin size={12} /> {currentCard.location}
               </div>
             )}
-            {/* === 新增：人气值标签 === */}
             <div className="absolute bottom-4 right-4 bg-orange-500/90 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 shadow-sm">
                <Flame size={12} fill="white" /> {popularity} 人感兴趣
             </div>
@@ -263,7 +276,7 @@ function App() {
             </div>
             
             <div className="mt-auto pt-4 flex items-center text-gray-400 text-sm">
-               <p>左右滑动以选择</p>
+               <p>{isViewingJob ? '右滑发送意向 (无弹窗)' : userIsVip ? '👑 VIP 右滑直接查看' : '右滑解锁联系方式'}</p>
             </div>
           </div>
         </div>
@@ -273,8 +286,8 @@ function App() {
         <button onClick={() => handleSwipe('left')} className="w-16 h-16 rounded-full bg-white shadow-lg border border-gray-100 flex items-center justify-center text-red-500">
           <X size={32} />
         </button>
-        <button onClick={() => handleSwipe('right')} className="w-16 h-16 rounded-full bg-blue-600 shadow-xl shadow-blue-200 flex items-center justify-center text-white">
-          {isViewingJob ? <Heart size={32} fill="white" /> : <DollarSign size={32} />}
+        <button onClick={() => handleSwipe('right')} className={`w-16 h-16 rounded-full shadow-xl flex items-center justify-center text-white ${userIsVip && !isViewingJob ? 'bg-yellow-500 shadow-yellow-200' : 'bg-blue-600 shadow-blue-200'}`}>
+          {isViewingJob ? <Heart size={32} fill="white" /> : userIsVip ? <Crown size={32} fill="white" /> : <DollarSign size={32} />}
         </button>
       </div>
 

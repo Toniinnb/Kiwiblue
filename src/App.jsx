@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
-import Login from './Login'; // 引入刚才写的登录页
+import Login from './Login';
+import Onboarding from './Onboarding'; // 新引入
 import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2 } from 'lucide-react';
 
-// ... (此处省略样式 cardStyle, Header, Avatar 组件代码，请保持原样，为了篇幅我不重复贴了，您只需要把下面 function App() 里的逻辑改了) ...
-// 为了方便您复制，我还是给您完整的 App.jsx 吧，防止出错。
-
+// === 样式与组件区 (保持不变) ===
 const cardStyle = {
   boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
   borderRadius: '1.5rem',
@@ -35,43 +34,60 @@ const Avatar = ({ type }) => (
   </div>
 );
 
-// 假数据保留做备用
 const MOCK_WORKERS = [
   { id: 1, name: "老王 (Wang)", role: "木工大工", rate: "$35/hr", location: "Albany", dist: "3.5km", tags: ["有车", "有工具", "SiteSafe"], verified: true, type: 'worker' },
 ];
 
 function App() {
-  // === 1. 新增：用户会话状态 ===
   const [session, setSession] = useState(null);
   const [loadingSession, setLoadingSession] = useState(true);
+  
+  // 新增：用户资料状态
+  const [userProfile, setUserProfile] = useState(null); 
+  const [checkingProfile, setCheckingProfile] = useState(false);
 
-  // === 2. 检查是否登录 ===
+  // 1. 检查 Session
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      setLoadingSession(false);
+      if (session) checkProfile(session.user.id);
+      else setLoadingSession(false);
     });
 
-    // 监听登录/登出变化
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (session) checkProfile(session.user.id);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // 原有的状态
+  // 2. 检查 Profile (是否填过资料)
+  async function checkProfile(userId) {
+    setCheckingProfile(true);
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+    
+    if (data) setUserProfile(data);
+    // 如果没找到 data，说明是新用户，userProfile 会是 null
+    setCheckingProfile(false);
+    setLoadingSession(false);
+  }
+
+  // 状态：当前主页显示逻辑
   const [userRole, setUserRole] = useState('worker'); 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [realJobs, setRealJobs] = useState([]);
-  const [loadingData, setLoadingData] = useState(false); // 改名防止冲突
+  const [loadingData, setLoadingData] = useState(false);
 
-  // === 3. 数据抓取逻辑 (保持不变) ===
+  // 抓取数据
   useEffect(() => {
     async function fetchJobs() {
-      if (userRole === 'worker' && session) { // 只有登录了才抓取
+      // 只有登录了、且填完资料了，才抓取
+      if (userRole === 'worker' && session && userProfile) {
         setLoadingData(true);
         const { data, error } = await supabase.from('jobs').select('*');
         if (!error) setRealJobs(data || []);
@@ -79,34 +95,39 @@ function App() {
       }
     }
     fetchJobs();
-  }, [userRole, session]);
+  }, [userRole, session, userProfile]);
 
-  // === 4. 如果还在检查登录状态，显示白屏或加载 ===
-  if (loadingSession) return null;
+  // === 路由逻辑 ===
+  
+  // 1. 加载中
+  if (loadingSession || checkingProfile) return <div className="h-screen flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-600" /></div>;
 
-  // === 5. 关键：如果没有登录，显示 Login 组件，而不是主界面 ===
-  if (!session) {
-    return <Login />;
+  // 2. 没登录 -> 去登录
+  if (!session) return <Login />;
+
+  // 3. 登录了但没资料 -> 去填资料 (Onboarding)
+  if (!userProfile) {
+    return <Onboarding session={session} onComplete={() => checkProfile(session.user.id)} />;
   }
 
-  // --- 以下是原本的主界面逻辑 (LoggedIn View) ---
+  // 4. 都有了 -> 进主页 (Main UI)
+  // --- 以下为主页逻辑 ---
 
   const deck = userRole === 'boss' ? MOCK_WORKERS : realJobs;
   const currentCard = deck[currentIndex];
 
   const handleSwipe = (direction) => {
-    if (direction === 'right') alert("感兴趣！");
+    if (direction === 'right') alert("感兴趣！(未来接通扣费)");
     if (currentIndex < deck.length) setCurrentIndex(curr => curr + 1);
   };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    setUserProfile(null);
   };
 
-  // 数据加载中
-  if (loadingData) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
+  if (loadingData) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-blue-600" /></div>;
 
-  // 刷完了
   if (!currentCard) {
     return (
       <div style={{height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', textAlign: 'center', fontFamily: 'sans-serif'}}>
@@ -121,8 +142,6 @@ function App() {
   return (
     <div style={{maxWidth: '450px', margin: '0 auto', height: '100vh', background: '#f3f4f6', position: 'relative', fontFamily: 'sans-serif'}}>
       <Header />
-      
-      {/* 这是一个临时的登出按钮，方便测试 */}
       <button onClick={handleLogout} style={{position: 'fixed', top: '14px', right: '10px', zIndex: 60, fontSize: '12px', color: '#666'}}>退出</button>
 
       <div style={{padding: '16px', marginTop: '60px', height: 'calc(100vh - 160px)', display: 'flex', flexDirection: 'column', justifyContent: 'center'}}>
@@ -134,6 +153,12 @@ function App() {
                 <MapPin size={12} /> {currentCard.location || currentCard.dist}
               </div>
             )}
+            {/* 显示是不是企业直招 */}
+            {userRole === 'worker' && (
+               <div style={{position: 'absolute', top: '16px', right: '16px', background: '#2563EB', color: 'white', padding: '4px 12px', borderRadius: '99px', fontSize: '12px', fontWeight: 'bold'}}>
+                 {currentCard.wage || '热门'}
+               </div>
+            )}
           </div>
 
           <div style={{flex: 1, padding: '20px', display: 'flex', flexDirection: 'column'}}>
@@ -144,13 +169,11 @@ function App() {
                 </h2>
                 <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px'}}>
                   <p style={{fontSize: '18px', color: '#6b7280', margin: 0}}>
-                    {userRole === 'boss' ? currentCard.name : "企业直招"}
+                    {userRole === 'boss' ? currentCard.name : "招聘方"}
                   </p>
+                  {/* 这里暂时写死，后续会接入 userProfile.is_verified */}
                   <ShieldCheck size={18} color="#22c55e" />
                 </div>
-              </div>
-              <div style={{color: '#2563EB', fontSize: '24px', fontWeight: 'bold'}}>
-                {userRole === 'boss' ? currentCard.rate : currentCard.wage}
               </div>
             </div>
 

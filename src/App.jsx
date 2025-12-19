@@ -19,19 +19,16 @@ const Header = ({ onOpenProfile }) => (
   </div>
 );
 
-const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
+// === 优化版卡片 ===
+const DraggableCard = ({ data, userRole, isVip, onSwipe, index, isInterested }) => {
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-200, 200], [-15, 15]); 
   const opacity = useTransform(x, [-200, -150, 0, 150, 200], [0, 1, 1, 1, 0]);
   const borderColor = useTransform(x, [-200, 0, 200], ['#ef4444', '#ffffff', userRole === 'worker' ? '#22c55e' : '#eab308']);
   
   const handleDragEnd = (event, info) => {
-    const threshold = 100; 
-    if (info.offset.x > threshold) {
-      onSwipe('right');
-    } else if (info.offset.x < -threshold) {
-      onSwipe('left');
-    }
+    if (info.offset.x > 100) onSwipe('right');
+    else if (info.offset.x < -100) onSwipe('left');
   };
 
   const isJob = userRole === 'worker';
@@ -40,13 +37,16 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
   const displayPrice = isJob ? (data.wage || "面议") : (data.intro?.split(' ')?.[1] || "面议");
   const displayTags = data.tags || (data.experience ? [data.experience] : []);
 
+  // 堆叠效果样式: 第二张卡片稍微缩小并下移，增加层次感
+  const stackStyle = index === 1 ? { scale: 0.96, y: 15, zIndex: 90, opacity: 0.8 } : { zIndex: 100 };
+
   return (
     <motion.div
-      drag="x" 
+      drag={index === 0 ? "x" : false} // 只有第一张能拖
       dragSnapToOrigin={true} 
       dragElastic={0.7} 
       whileDrag={{ scale: 1.05, cursor: 'grabbing' }} 
-      style={{ x, rotate, opacity, position: 'absolute', width: '100%', height: '100%', zIndex: 100 - index }}
+      style={{ x: index===0 ? x : 0, rotate: index===0 ? rotate : 0, opacity: index===0 ? opacity : 1, position: 'absolute', width: '100%', height: '100%', ...stackStyle }}
       exit={{ x: x.get() < 0 ? -1000 : 1000, opacity: 0, transition: { duration: 0.4 } }}
       onDragEnd={handleDragEnd}
       className="bg-white rounded-[1.5rem] shadow-2xl overflow-hidden flex flex-col border border-gray-100 w-full max-w-[340px]" 
@@ -62,16 +62,19 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
           </div>
         )}
         
+        {/* === 智能排序：感兴趣标签 === */}
+        {isInterested && (
+           <div className="absolute top-0 left-0 right-0 bg-red-500 text-white text-center text-xs font-bold py-1 z-30 animate-pulse">
+             🔥 对方发来了意向
+           </div>
+        )}
+
         {!isJob && (
             <div className="absolute top-4 left-4 z-20">
               {isVip ? (
-                <div className="bg-yellow-400 text-yellow-900 px-3 py-1.5 rounded-full text-xs font-bold shadow-lg flex items-center gap-1 animate-pulse">
-                  <Crown size={14} fill="currentColor" /> VIP 免扣费
-                </div>
+                <div className="bg-yellow-400 text-yellow-900 px-3 py-1.5 rounded-full text-xs font-bold shadow-lg flex items-center gap-1 animate-pulse"><Crown size={14} fill="currentColor" /> VIP</div>
               ) : (
-                <div className="bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-bold text-gray-600 shadow-sm flex items-center gap-1">
-                  <Lock size={12} /> 号码隐藏
-                </div>
+                <div className="bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-bold text-gray-600 shadow-sm flex items-center gap-1"><Lock size={12} /> 号码隐藏</div>
               )}
             </div>
         )}
@@ -103,7 +106,6 @@ function App() {
   const [cards, setCards] = useState([]); 
   const [loading, setLoading] = useState(true);
   
-  // 状态：客服微信号
   const [wechatId, setWechatId] = useState('Kiwi_Admin_001');
 
   useEffect(() => {
@@ -116,10 +118,7 @@ function App() {
       setSession(session);
       if (session) checkProfile(session.user.id);
     });
-
-    // === 读取数据库配置 ===
     fetchConfig();
-
     return () => subscription.unsubscribe();
   }, []);
 
@@ -141,6 +140,7 @@ function App() {
     setLoading(false);
   }
 
+  // === 核心：智能排序抓取 ===
   const fetchData = async () => {
     if (!session || !userProfile) return;
     try {
@@ -148,12 +148,29 @@ function App() {
         const { data } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
         setCards(data || []);
       } else {
+        // 1. 获取已解锁名单 (排除)
         const { data: unlocked } = await supabase.from('contacts').select('worker_id').eq('boss_id', session.user.id);
         const unlockedIds = unlocked ? unlocked.map(u => u.worker_id) : [];
+
+        // 2. 获取谁喜欢了我的工作 (智能排序)
+        const { data: applicants } = await supabase.from('applications').select('worker_id').eq('boss_id', session.user.id);
+        const interestedIds = applicants ? applicants.map(a => a.worker_id) : [];
+
+        // 3. 抓取所有工友
         let query = supabase.from('profiles').select('*').eq('role', 'worker').neq('status', 'busy').order('updated_at', { ascending: false });
         if (unlockedIds.length > 0) query = query.not('id', 'in', `(${unlockedIds.join(',')})`);
-        const { data } = await query;
-        setCards(data || []);
+        
+        const { data: allWorkers } = await query;
+        
+        if (allWorkers) {
+           // 排序逻辑：感兴趣的排最前，其他的排后面
+           const interested = allWorkers.filter(w => interestedIds.includes(w.id));
+           // 给这些人打上标记
+           interested.forEach(w => w.is_interested = true);
+           
+           const others = allWorkers.filter(w => !interestedIds.includes(w.id));
+           setCards([...interested, ...others]);
+        }
       }
     } catch (error) { console.error(error); }
   };
@@ -180,12 +197,23 @@ function App() {
         const limit = 20 + (userProfile.swipe_quota_extra || 0);
         const used = userProfile.swipes_used_today || 0;
         if (used >= limit) {
-          alert(`查看次数已达上限！请邀请工友增加额度。`);
+          alert(`查看次数已达上限！`);
           window.location.reload(); 
           return;
         }
         await supabase.from('profiles').update({ swipes_used_today: used + 1 }).eq('id', session.user.id);
         await supabase.from('jobs').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id);
+        
+        // === 记录申请记录 (用于智能排序) ===
+        // 假设每个工作都有 boss_id (我们在生成假数据时加了，如果是真数据也得有)
+        if (currentCard.boss_id) {
+           await supabase.from('applications').insert({ 
+             worker_id: session.user.id, 
+             job_id: currentCard.id,
+             boss_id: currentCard.boss_id 
+           });
+        }
+
         setUserProfile(prev => ({...prev, swipes_used_today: used + 1}));
         setCurrentIndex(curr => curr + 1);
         return;
@@ -238,19 +266,13 @@ function App() {
         <p className="text-gray-500 mt-2 mb-6">暂时没有更多匹配。</p>
         <div className="flex flex-col gap-3 w-full max-w-xs">
           <button onClick={() => { setCurrentIndex(0); fetchData(); }} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium shadow-lg shadow-blue-200">刷新看看</button>
-          
           {userProfile.role === 'boss' && (
             <button onClick={handleContactSupport} className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-orange-500 text-white rounded-xl font-bold shadow-lg shadow-orange-200 flex items-center justify-center gap-2">
               <Crown size={20} fill="white" /> 开通 VIP 无限刷
             </button>
           )}
-
           <button onClick={() => setShowProfile(true)} className="px-6 py-3 bg-white text-gray-700 border border-gray-200 rounded-xl font-medium hover:bg-gray-50">进入个人中心</button>
         </div>
-        
-        {userProfile.role === 'boss' && (
-          <button onClick={() => setShowPostJob(true)} className="fixed bottom-24 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-[999] hover:scale-105 transition-transform"><Plus size={28} /></button>
-        )}
       </div>
     );
   }
@@ -262,7 +284,7 @@ function App() {
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
       <Header onOpenProfile={() => setShowProfile(true)} />
       
-      {/* 卡片区域：保持原样 */}
+      {/* 卡片区域 */}
       <div className="w-full flex flex-col justify-center items-center relative px-4" style={{ height: '55vh', marginTop: '80px' }}>
         <AnimatePresence>
           {cards.slice(currentIndex, currentIndex + 2).reverse().map((card, i) => {
@@ -273,30 +295,48 @@ function App() {
                   userRole={userProfile.role} 
                   isVip={isUserVip} 
                   onSwipe={handleSwipe} 
-                  index={i}
+                  index={i} 
+                  isInterested={card.is_interested}
                />
              );
           })}
         </AnimatePresence>
       </div>
 
-      {/* === 修改点 2: 按钮大幅上移 (bottom-36) === */}
-      <div className="fixed bottom-36 left-0 right-0 max-w-md mx-auto px-12 flex items-center justify-between z-20 pointer-events-auto">
-        <button onClick={() => handleSwipe('left')} className="w-16 h-16 rounded-full bg-white shadow-xl border border-gray-200 text-gray-400 flex items-center justify-center hover:bg-gray-50 active:scale-95 transition-all"><X size={32} /></button>
-        <button onClick={() => handleSwipe('right')} className={`w-16 h-16 rounded-full shadow-xl flex items-center justify-center text-white active:scale-95 transition-all ${isUserVip && !isJob ? 'bg-yellow-500 shadow-yellow-200' : 'bg-blue-600 shadow-blue-200'}`}>
-          {isJob ? <Heart size={30} fill="white" /> : isUserVip ? <Crown size={30} fill="white" /> : <DollarSign size={30} />}
+      {/* === UI 重构：底部悬浮控制台 === */}
+      {/* 这是一个悬浮在广告位上方的 Flex 容器，包含 Pass(X), Post(+), Like(♥) */}
+      <div className="fixed bottom-[140px] left-0 right-0 max-w-md mx-auto px-6 flex items-end justify-center gap-6 z-20 pointer-events-auto">
+        
+        {/* 左：不感兴趣 */}
+        <button onClick={() => handleSwipe('left')} className="w-14 h-14 rounded-full bg-white shadow-xl border border-gray-100 text-gray-400 flex items-center justify-center hover:bg-gray-50 active:scale-95 transition-all">
+          <X size={28} />
         </button>
+
+        {/* 中：发布按钮 (仅老板) - 做得最大最炫 */}
+        {userProfile.role === 'boss' && (
+           <button 
+             onClick={() => setShowPostJob(true)} 
+             className="w-20 h-20 rounded-full bg-gradient-to-br from-gray-900 to-black text-white shadow-2xl shadow-gray-400 border-4 border-gray-100 flex items-center justify-center transform -translate-y-4 hover:scale-105 active:scale-95 transition-all"
+           >
+             <Plus size={36} />
+           </button>
+        )}
+
+        {/* 右：感兴趣/解锁 */}
+        <button 
+          onClick={() => handleSwipe('right')} 
+          className={`w-14 h-14 rounded-full shadow-xl flex items-center justify-center text-white active:scale-95 transition-all ${isUserVip && !isJob ? 'bg-yellow-500 shadow-yellow-200' : 'bg-blue-600 shadow-blue-200'}`}
+        >
+          {isJob ? <Heart size={26} fill="white" /> : isUserVip ? <Crown size={26} fill="white" /> : <DollarSign size={26} />}
+        </button>
+
       </div>
 
-      {/* === 修改点 3: 底部广告位占位符 === */}
-      <div className="fixed bottom-4 left-4 right-4 max-w-md mx-auto h-24 bg-gray-200 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 z-10">
-        <Megaphone size={24} className="mb-1" />
-        <span className="text-xs font-medium">广告位招租</span>
+      {/* === 升级版广告位 (高度增加) === */}
+      <div className="fixed bottom-4 left-4 right-4 max-w-md mx-auto h-28 bg-gray-200 rounded-2xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 z-10">
+        <Megaphone size={28} className="mb-1" />
+        <span className="text-xs font-medium">黄金广告位招租</span>
       </div>
-
-      {userProfile.role === 'boss' && (
-        <button onClick={() => setShowPostJob(true)} className="fixed bottom-36 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-[999] hover:scale-105 transition-transform"><Plus size={28} /></button>
-      )}
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
-import { X, Lock, Phone, Loader2, ShieldAlert, ChevronRight, Gift, Copy, Crown, User, Building2 } from 'lucide-react';
-import AvatarUpload from './AvatarUpload'; 
+import { X, Phone, Loader2, ChevronRight, Gift, Copy, Crown, MessageCircle } from 'lucide-react';
+import AvatarUpload from './AvatarUpload';
+import Chat from './Chat'; // 引入聊天
 
 export default function Profile({ session, userProfile, onClose, onLogout, onProfileUpdate }) {
   const [activeTab, setActiveTab] = useState('info'); 
@@ -11,12 +12,13 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [selectedWorker, setSelectedWorker] = useState(null);
   
-  // 状态：微信号
+  // 新增：聊天状态
+  const [chatUser, setChatUser] = useState(null);
+
   const [wechatId, setWechatId] = useState('Kiwi_Admin_001');
 
   useEffect(() => {
     if (userProfile.role === 'boss') fetchContacts();
-    // 读取配置
     fetchConfig();
   }, []);
 
@@ -56,6 +58,17 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     navigator.clipboard.writeText(wechatId);
   };
 
+  // 生成邀请链接
+  const inviteLink = `${window.location.origin}/?ref=${userProfile.phone}`;
+  // 生成二维码图片URL (使用公共API)
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(inviteLink)}`;
+
+  // 如果打开了聊天窗口
+  if (chatUser) {
+    return <Chat session={session} otherUser={chatUser} onClose={() => setChatUser(null)} />;
+  }
+
+  // 详情页
   if (selectedWorker) {
     return (
       <div className="fixed inset-0 z-[60] bg-white flex flex-col animate-slide-in-right">
@@ -75,8 +88,27 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
              <h3 className="text-2xl font-bold text-gray-900">{selectedWorker.name}</h3>
              <p className="text-gray-500 mt-1">{selectedWorker.intro}</p>
           </div>
+          
           <div className="bg-white rounded-2xl p-6 shadow-sm space-y-4">
-             <div><label className="text-xs text-gray-400">手机号码</label><div className="text-xl font-bold text-gray-900 flex items-center justify-between">{selectedWorker.phone}<a href={`tel:${selectedWorker.phone}`} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm shadow-lg">拨打</a></div></div>
+             {/* 电话 */}
+             <div>
+               <label className="text-xs text-gray-400">手机号码</label>
+               <div className="text-xl font-bold text-gray-900 flex items-center justify-between">
+                 {selectedWorker.phone}
+                 <a href={`tel:${selectedWorker.phone}`} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm shadow-lg">拨打</a>
+               </div>
+             </div>
+             
+             {/* 聊天按钮 (新增) */}
+             <div className="pt-4 border-t border-gray-100">
+               <button 
+                 onClick={() => setChatUser(selectedWorker)}
+                 className="w-full py-3 bg-blue-50 text-blue-600 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-blue-100 transition-colors"
+               >
+                 <MessageCircle size={20} /> 发送消息
+               </button>
+             </div>
+
              {selectedWorker.wechat && <div className="pt-4 border-t border-gray-100"><label className="text-xs text-gray-400">微信号</label><div className="text-lg font-medium text-gray-900">{selectedWorker.wechat}</div></div>}
           </div>
         </div>
@@ -104,13 +136,22 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
              <div className="mb-6"><button onClick={handleContactSupport} className="bg-gray-900 text-yellow-400 px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-gray-300 flex items-center gap-2 mx-auto animate-pulse active:scale-95 transition-transform"><Crown size={16} /> 开通 VIP 无限刷</button></div>
           )}
           
+          {/* 邀请奖励卡片 (升级版) */}
           <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-100 rounded-xl p-4 text-left">
-            <div className="flex items-center gap-2 text-yellow-800 font-bold mb-2"><Gift size={18} /> 邀请赚奖励</div>
-            <p className="text-xs text-yellow-700 mb-3">让朋友注册时填您的手机号，双方都有奖！</p>
-            <div className="bg-white/80 p-2 rounded-lg flex justify-between items-center border border-yellow-200">
-              <span className="font-mono font-bold text-gray-600 ml-1">{userProfile.phone}</span>
-              <button onClick={() => {navigator.clipboard.writeText(userProfile.phone); alert("已复制邀请码！");}} className="text-xs bg-yellow-400 text-yellow-900 px-2 py-1 rounded font-bold flex items-center gap-1"><Copy size={12}/> 复制</button>
+            <div className="flex justify-between items-start">
+              <div>
+                <div className="flex items-center gap-2 text-yellow-800 font-bold mb-2"><Gift size={18} /> 邀请有奖</div>
+                <p className="text-xs text-yellow-700 mb-3 leading-relaxed">
+                  让朋友扫描二维码或点击链接注册，<br/>双方立享奖励！
+                </p>
+                <button onClick={() => {navigator.clipboard.writeText(inviteLink); alert("链接已复制！");}} className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 shadow-sm"><Copy size={12}/> 复制链接</button>
+              </div>
+              {/* 二维码展示 */}
+              <div className="w-20 h-20 bg-white p-1 rounded-lg shadow-sm border border-yellow-200">
+                <img src={qrCodeUrl} alt="QR" className="w-full h-full object-contain" />
+              </div>
             </div>
+            <div className="mt-3 text-[10px] text-gray-400 text-center">邀请码: {userProfile.phone}</div>
           </div>
         </div>
 
@@ -138,7 +179,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
         {activeTab === 'contacts' && (
           <div className="space-y-3">
             {contacts.map(worker => (
-                <div key={worker.id} onClick={() => setSelectedWorker(worker)} className="bg-white p-4 rounded-xl shadow-sm flex justify-between items-center cursor-pointer">
+                <div key={worker.id} onClick={() => setSelectedWorker(worker)} className="bg-white p-4 rounded-xl shadow-sm flex justify-between items-center cursor-pointer active:scale-95 transition-transform">
                   <div className="flex items-center gap-3">
                      <div className="w-10 h-10 rounded-full bg-gray-100 overflow-hidden">
                        {worker.avatar_url ? <img src={worker.avatar_url} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-gray-400 font-bold">{worker.name?.[0]}</div>}

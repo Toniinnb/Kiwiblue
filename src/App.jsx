@@ -4,7 +4,7 @@ import Login from './Login';
 import Onboarding from './Onboarding';
 import PostJob from './PostJob'; 
 import Profile from './Profile'; 
-import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, LogOut } from 'lucide-react';
+import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame } from 'lucide-react'; // 引入 Flame 图标
 
 const cardStyle = {
   boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
@@ -42,27 +42,22 @@ function App() {
   const [session, setSession] = useState(null);
   const [loadingSession, setLoadingSession] = useState(true);
   const [userProfile, setUserProfile] = useState(null); 
-  
   const [showPostJob, setShowPostJob] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
-  
   const [currentIndex, setCurrentIndex] = useState(0);
   const [cards, setCards] = useState([]); 
   const [loadingData, setLoadingData] = useState(false);
 
-  // 1. Session Check
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) checkProfile(session.user.id);
       else setLoadingSession(false);
     });
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) checkProfile(session.user.id);
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
@@ -72,21 +67,33 @@ function App() {
     setLoadingSession(false);
   }
 
-  // 2. Data Fetching
+  // === 核心修复：数据抓取逻辑 ===
   const fetchData = async () => {
     if (!session || !userProfile) return;
     setLoadingData(true);
     try {
       if (userProfile.role === 'worker') {
+        // 工友看工作：全部显示
         const { data } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
         setCards(data || []);
       } else {
-        // 老板抓取工人：排除已解锁的 (可选优化，V1.0先不排除，允许重复看)
-        const { data } = await supabase.from('profiles')
+        // 老板看工人：先查我已经解锁了谁
+        const { data: unlocked } = await supabase.from('contacts').select('worker_id').eq('boss_id', session.user.id);
+        const unlockedIds = unlocked ? unlocked.map(u => u.worker_id) : [];
+
+        // 构建查询：排除忙碌的 + 排除已解锁的
+        let query = supabase.from('profiles')
           .select('*')
           .eq('role', 'worker')
-          .neq('status', 'busy') 
+          .neq('status', 'busy')
           .order('updated_at', { ascending: false });
+
+        // 如果有已解锁的，把它排除掉
+        if (unlockedIds.length > 0) {
+          query = query.not('id', 'in', `(${unlockedIds.join(',')})`);
+        }
+
+        const { data } = await query;
         setCards(data || []);
       }
     } catch (error) { console.error(error); }
@@ -100,106 +107,97 @@ function App() {
     window.location.reload();
   };
 
-  // === 💰 核心逻辑：智能定价算法 ===
   const calculateCost = (card) => {
-    if (!card.experience) return 1; // 没写经验，默认1币
-    // 提取数字 (例如 "5年" -> 5)
+    if (!card.experience) return 1; 
     const match = card.experience.match(/(\d+)/); 
     if (match) {
       let years = parseInt(match[0], 10);
-      if (years > 10) years = 10; // 封顶10币
-      if (years < 1) years = 1;   // 保底1币
+      if (years > 10) years = 10; 
+      if (years < 1) years = 1;   
       return years;
     }
-    return 1; // 没数字(如"新手")，默认1币
+    return 1; 
   };
 
   const handleSwipe = async (direction) => {
     const currentCard = cards[currentIndex];
     
-    // 左滑：不喜欢，直接下一个
     if (direction === 'left') {
       setCurrentIndex(curr => curr + 1);
       return;
     }
 
-    // 右滑：交易逻辑
     if (direction === 'right') {
-      
-      // 场景 A: 工友滑工作
+      // === 人气值逻辑：右滑就 +1 ===
       if (userProfile.role === 'worker') {
-        alert("✅ 已发送意向！老板上线后会看到。");
+        // 工人滑工作：工作人气 +1
+        await supabase.from('jobs').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id);
+        alert("✅ 已发送意向！");
         setCurrentIndex(curr => curr + 1);
-        return;
-      }
-
-      // 场景 B: 老板滑工友 (扣费解锁)
-      if (userProfile.role === 'boss') {
+      } 
+      else if (userProfile.role === 'boss') {
         const cost = calculateCost(currentCard);
+        const confirmUnlock = window.confirm(`经验：${currentCard.experience || '入门'}，解锁需扣 ${cost} 币。\n余额：${userProfile.credits || 0}\n确认解锁？`);
         
-        // 1. 确认弹窗
-        const confirmUnlock = window.confirm(`这位师傅经验值为【${currentCard.experience || '入门'}】，解锁联系方式需要扣除 【${cost}金币】。\n\n您当前余额：${userProfile.credits || 0}\n是否确认解锁？`);
-        
-        if (!confirmUnlock) return; // 后悔了
+        if (!confirmUnlock) return; 
 
-        // 2. 检查余额
         if ((userProfile.credits || 0) < cost) {
-          alert("❌ 余额不足，请充值！");
+          alert("❌ 余额不足！");
           return;
         }
 
-        // 3. 执行交易 (前端简单版，实际项目应用后端事务)
-        // 3.1 扣费
-        const { error: creditError } = await supabase
-          .from('profiles')
-          .update({ credits: userProfile.credits - cost })
-          .eq('id', session.user.id);
+        // 扣费 + 记录
+        const { error: creditError } = await supabase.from('profiles').update({ credits: userProfile.credits - cost }).eq('id', session.user.id);
+        if (creditError) return alert("交易失败");
 
-        if (creditError) return alert("交易失败：" + creditError.message);
-
-        // 3.2 记录通讯录
-        const { error: contactError } = await supabase
-          .from('contacts')
-          .insert({ boss_id: session.user.id, worker_id: currentCard.id });
-
-        // 3.3 成功反馈
-        alert("🔓 解锁成功！\n\n请点击右上角【个人中心】->【已解锁】查看电话。");
+        await supabase.from('contacts').insert({ boss_id: session.user.id, worker_id: currentCard.id });
         
-        // 刷新个人资料(更新余额)
+        // 老板滑工人：工人人气 +1
+        await supabase.from('profiles').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id);
+
+        alert("🔓 解锁成功！请去个人中心查看详情。");
         checkProfile(session.user.id);
+        // 重要：解锁后直接跳下一个，因为已经买到手了，去通讯录看就行
         setCurrentIndex(curr => curr + 1);
       }
     }
   };
 
-  // ... (渲染部分与之前相同，为节省篇幅，EmergencyLogout 和 Card 渲染逻辑保持不变)
-  // ... 请保留之前的 EmergencyLogout, getCardTitle 等辅助函数 ...
-  // 为了保证您复制完整，我把关键渲染部分再贴一次：
-
   const EmergencyLogout = () => (
-    <button onClick={handleLogout} className="fixed top-20 right-4 z-50 bg-red-100 text-red-500 text-xs px-2 py-1 rounded border border-red-200 opacity-50 hover:opacity-100">遇到问题？点此登出</button>
+    <button onClick={handleLogout} className="fixed top-20 right-4 z-50 bg-red-100 text-red-500 text-xs px-2 py-1 rounded border border-red-200 opacity-50 hover:opacity-100">强制登出</button>
   );
 
   if (loadingSession) return <div className="h-screen flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-600" /></div>;
   if (!session) return <Login />;
   if (!userProfile) return <Onboarding session={session} onComplete={() => checkProfile(session.user.id)} />;
-
   if (showPostJob) return <PostJob session={session} onClose={() => setShowPostJob(false)} onPostSuccess={fetchData} />;
-  
   if (showProfile) return <Profile session={session} userProfile={userProfile} onClose={() => setShowProfile(false)} onLogout={handleLogout} onProfileUpdate={() => checkProfile(session.user.id)} />;
 
   const currentCard = cards[currentIndex];
 
   if (loadingData) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-blue-600" /></div>;
 
+  // === 刷完了页面 (修复：增加“进入个人中心”按钮) ===
   if (!currentCard) {
     return (
       <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center">
         <EmergencyLogout />
+        <Header onOpenProfile={() => setShowProfile(true)} />
         <CheckCircle2 size={64} className="text-gray-300 mb-4" />
         <h2 className="text-xl font-bold text-gray-800">刷完了</h2>
-        <p className="text-gray-500 mt-2 mb-6">暂时没有更多匹配。</p>
-        <button onClick={() => setCurrentIndex(0)} className="px-6 py-2 bg-blue-600 text-white rounded-full font-medium">从头再刷一次</button>
+        <p className="text-gray-500 mt-2 mb-6">暂时没有更多{userProfile.role === 'boss' ? '工友' : '工作'}。</p>
+        
+        <div className="flex flex-col gap-3 w-full max-w-xs">
+          <button onClick={() => { setCurrentIndex(0); fetchData(); }} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium shadow-lg shadow-blue-200">
+            刷新看看
+          </button>
+          
+          {/* 新增：直达个人中心 */}
+          <button onClick={() => setShowProfile(true)} className="px-6 py-3 bg-white text-gray-700 border border-gray-200 rounded-xl font-medium hover:bg-gray-50">
+            进入个人中心
+          </button>
+        </div>
+
         {userProfile.role === 'boss' && (
            <button onClick={() => setShowPostJob(true)} className="mt-8 flex items-center gap-2 text-blue-600 font-bold bg-blue-50 px-6 py-3 rounded-xl">
              <Plus size={20} /> 发布新招工
@@ -209,28 +207,13 @@ function App() {
     );
   }
 
-  // Card Display Logic
   const isViewingJob = userProfile.role === 'worker';
-  const getCardTitle = () => {
-    if (isViewingJob) return currentCard.title || "招工";
-    if (!currentCard.intro) return "工友";
-    return currentCard.intro.split(' ')?.[0] || "工友";
-  };
-  const getCardPrice = () => {
-    if (isViewingJob) return currentCard.wage || "面议";
-    if (!currentCard.intro) return "面议";
-    return currentCard.intro.split(' ')?.[1] || "面议";
-  };
-  const getCardTags = () => {
-    const tags = currentCard.tags || [];
-    if (tags.length > 0) return tags;
-    return currentCard.experience ? [currentCard.experience] : [];
-  };
-
-  const displayTitle = getCardTitle();
+  const displayTitle = isViewingJob ? (currentCard.title || "招工") : (currentCard.intro?.split(' ')?.[0] || "工友");
   const displaySub = isViewingJob ? "招聘方" : (currentCard.name || "匿名");
-  const displayPrice = getCardPrice();
-  const displayTags = getCardTags();
+  const displayPrice = isViewingJob ? (currentCard.wage || "面议") : (currentCard.intro?.split(' ')?.[1] || "面议");
+  const displayTags = currentCard.tags || (currentCard.experience ? [currentCard.experience] : []);
+  // 获取人气值 (如果数据库还没这列，默认0)
+  const popularity = currentCard.popularity || 0;
 
   return (
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
@@ -253,6 +236,10 @@ function App() {
                 <MapPin size={12} /> {currentCard.location}
               </div>
             )}
+            {/* === 新增：人气值标签 === */}
+            <div className="absolute bottom-4 right-4 bg-orange-500/90 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 shadow-sm">
+               <Flame size={12} fill="white" /> {popularity} 人感兴趣
+            </div>
           </div>
 
           <div className="flex-1 p-5 flex flex-col">
@@ -276,7 +263,7 @@ function App() {
             </div>
             
             <div className="mt-auto pt-4 flex items-center text-gray-400 text-sm">
-               <p>左右滑动以选择 (右滑解锁)</p>
+               <p>左右滑动以选择</p>
             </div>
           </div>
         </div>
@@ -292,10 +279,7 @@ function App() {
       </div>
 
       {userProfile.role === 'boss' && (
-        <button 
-          onClick={() => setShowPostJob(true)}
-          className="fixed bottom-24 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-30 hover:scale-105 transition-transform"
-        >
+        <button onClick={() => setShowPostJob(true)} className="fixed bottom-24 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-30 hover:scale-105 transition-transform">
           <Plus size={28} />
         </button>
       )}

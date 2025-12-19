@@ -5,7 +5,8 @@ import Onboarding from './Onboarding';
 import PostJob from './PostJob'; 
 import Profile from './Profile'; 
 import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown } from 'lucide-react';
-import { motion, useMotionValue, useTransform } from 'framer-motion';
+// 引入 AnimatePresence 以实现丝滑的离场动画
+import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 
 const Header = ({ onOpenProfile }) => (
   <div style={{height: '56px', background: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'fixed', top: 0, width: '100%', zIndex: 40, borderBottom: '1px solid #eee', padding: '0 16px', maxWidth: '450px', left: '50%', transform: 'translateX(-50%)'}}>
@@ -19,15 +20,21 @@ const Header = ({ onOpenProfile }) => (
   </div>
 );
 
+// === 核心：可拖拽的卡片组件 (优化版) ===
 const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
   const x = useMotionValue(0);
-  const rotate = useTransform(x, [-200, 200], [-10, 10]); 
-  const opacity = useTransform(x, [-200, -100, 0, 100, 200], [0, 1, 1, 1, 0]);
+  const rotate = useTransform(x, [-200, 200], [-15, 15]); // 增加旋转角度，更动感
+  const opacity = useTransform(x, [-200, -150, 0, 150, 200], [0, 1, 1, 1, 0]);
   const borderColor = useTransform(x, [-200, 0, 200], ['#ef4444', '#ffffff', userRole === 'worker' ? '#22c55e' : '#eab308']);
   
+  // 拖拽结束时的逻辑
   const handleDragEnd = (event, info) => {
-    if (info.offset.x > 100) onSwipe('right');
-    else if (info.offset.x < -100) onSwipe('left');
+    const threshold = 100; // 滑动阈值
+    if (info.offset.x > threshold) {
+      onSwipe('right');
+    } else if (info.offset.x < -threshold) {
+      onSwipe('left');
+    }
   };
 
   const isJob = userRole === 'worker';
@@ -38,15 +45,25 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
 
   return (
     <motion.div
-      drag="x" 
-      dragConstraints={{ left: 0, right: 0 }}
-      style={{ x, rotate, opacity, position: 'absolute', top: 0, width: '100%', height: '100%', zIndex: 100 - index }}
+      drag="x" // 允许横向拖拽
+      dragSnapToOrigin={true} // 松手自动回弹 (除非飞走)
+      dragElastic={0.7} // 阻尼感
+      whileDrag={{ scale: 1.05, cursor: 'grabbing' }} // 拖拽时微微放大
+      style={{ x, rotate, opacity, position: 'absolute', width: '100%', height: '100%', zIndex: 100 - index }}
+      // === 核心：离场动画 ===
+      exit={{ 
+        x: x.get() < 0 ? -1000 : 1000, 
+        opacity: 0, 
+        transition: { duration: 0.4 } 
+      }}
       onDragEnd={handleDragEnd}
-      className="bg-white rounded-[1.5rem] shadow-xl overflow-hidden flex flex-col h-[65vh] border-4"
+      className="bg-white rounded-[1.5rem] shadow-2xl overflow-hidden flex flex-col border-2 border-gray-100" // 移除之前的 h-[65vh] 改由父级控制
     >
-      <motion.div style={{ borderColor }} className="absolute inset-0 border-4 rounded-[1.5rem] pointer-events-none z-50 transition-colors" />
+      <motion.div style={{ borderColor }} className="absolute inset-0 border-[6px] rounded-[1.5rem] pointer-events-none z-50 transition-colors" />
+      
+      {/* 卡片上半部分 (图片/信息) */}
       <div className="h-3/5 relative bg-gray-200 pointer-events-none">
-        <div className="w-full h-full bg-[#f3f4f6] flex justify-center items-center text-gray-400">
+        <div className="w-full h-full bg-gradient-to-b from-gray-100 to-gray-200 flex justify-center items-center text-gray-400">
            {isJob ? <Building2 size={80} /> : <User size={80} />}
         </div>
         {!isJob && (
@@ -62,16 +79,19 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
         <div className="absolute bottom-4 right-4 bg-orange-500/90 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 shadow-sm"><Flame size={12} fill="white" /> {data.popularity || 0} 热度</div>
       </div>
 
-      <div className="flex-1 p-5 flex flex-col pointer-events-none bg-white">
-        <div className="flex justify-between items-start">
+      {/* 卡片下半部分 (内容) */}
+      <div className="flex-1 p-6 flex flex-col pointer-events-none bg-white">
+        <div className="flex justify-between items-start mb-2">
           <div>
             <h2 className="text-2xl font-bold text-gray-900 leading-tight mb-1">{displayTitle}</h2>
             <div className="flex items-center gap-2"><p className="text-gray-500 text-lg font-medium">{displaySub}</p>{data.is_verified ? <ShieldCheck size={16} className="text-green-500" /> : null}</div>
           </div>
           <div className="text-blue-600 font-bold text-2xl tracking-tight">{displayPrice}</div>
         </div>
-        <div className="flex flex-wrap gap-2 mt-4">{displayTags.map((tag, i) => (<span key={i} className="px-2.5 py-1 bg-blue-50 text-blue-700 text-sm font-semibold rounded-md">{tag}</span>))}</div>
-        <div className="mt-auto pt-4 flex items-center text-gray-400 text-sm"><p>{isJob ? '右滑发送意向' : isVip ? '👑 VIP 右滑直开' : '右滑解锁'}</p></div>
+        <div className="flex flex-wrap gap-2 mt-4">{displayTags.map((tag, i) => (<span key={i} className="px-3 py-1 bg-blue-50 text-blue-700 text-sm font-semibold rounded-lg">{tag}</span>))}</div>
+        <div className="mt-auto pt-4 flex items-center justify-center text-gray-300 text-sm font-medium">
+           {isJob ? '← 不感兴趣 · 感兴趣 →' : '← 下一个 · 解锁 →'}
+        </div>
       </div>
     </motion.div>
   );
@@ -86,8 +106,8 @@ function App() {
   const [cards, setCards] = useState([]); 
   const [loading, setLoading] = useState(true);
 
-  // 🔴 您的客服微信号 (请在这里修改)
-  const CUSTOMER_SERVICE_WECHAT = "Thismour";
+  // 🔴 您的客服微信号
+  const CUSTOMER_SERVICE_WECHAT = "Kiwi_Admin_001";
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -136,7 +156,7 @@ function App() {
 
   const isVip = () => userProfile?.vip_expiry && new Date(userProfile.vip_expiry) > new Date();
 
-  // 复制微信号逻辑
+  // 复制微信号
   const handleContactSupport = () => {
     alert(`请添加客服微信充值/开通VIP：\n\n${CUSTOMER_SERVICE_WECHAT}\n\n(点击确定自动复制)`);
     navigator.clipboard.writeText(CUSTOMER_SERVICE_WECHAT);
@@ -145,6 +165,10 @@ function App() {
   const handleSwipe = async (direction) => {
     const currentCard = cards[currentIndex];
     
+    // 动画逻辑由 AnimatePresence 接管，这里只负责数据流
+    // 如果是弹窗确认失败的情况，我们需要“撤销”这次 currentIndex 的变动
+    // 但 DraggableCard 已经在飞了，所以老板模式下我们稍微特殊处理：先弹窗，确认后再飞
+
     if (direction === 'left') {
       setCurrentIndex(curr => curr + 1);
       return;
@@ -156,7 +180,8 @@ function App() {
         const used = userProfile.swipes_used_today || 0;
 
         if (used >= limit) {
-          alert(`今天查看次数已达上限 (${limit}次)！\n\n💡 邀请工友注册，每人奖励 5 次机会！\n\n您的邀请码是您的手机号。`);
+          alert(`今天查看次数已达上限 (${limit}次)！\n\n💡 邀请工友注册，奖励更多机会！`);
+          // 刷新页面重置卡片位置
           window.location.reload(); 
           return;
         }
@@ -178,6 +203,9 @@ function App() {
         }
 
         const cost = calculateCost(currentCard);
+        // 注意：这里弹窗会打断动画，为了防止卡片飞走后又弹回来，
+        // 实际上最佳体验是：先弹窗，确定后，再允许组件飞走。
+        // 但目前架构下，我们允许先弹窗。如果用户取消，刷新页面恢复。
         const confirmUnlock = window.confirm(`解锁需扣 ${cost} 币，确认？`);
         
         if (!confirmUnlock) {
@@ -225,7 +253,6 @@ function App() {
         <div className="flex flex-col gap-3 w-full max-w-xs">
           <button onClick={() => { setCurrentIndex(0); fetchData(); }} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium shadow-lg shadow-blue-200">刷新看看</button>
           
-          {/* === 新增：VIP 充值按钮 === */}
           {userProfile.role === 'boss' && (
             <button onClick={handleContactSupport} className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-orange-500 text-white rounded-xl font-bold shadow-lg shadow-orange-200 flex items-center justify-center gap-2">
               <Crown size={20} fill="white" /> 开通 VIP 无限刷
@@ -234,29 +261,45 @@ function App() {
 
           <button onClick={() => setShowProfile(true)} className="px-6 py-3 bg-white text-gray-700 border border-gray-200 rounded-xl font-medium hover:bg-gray-50">进入个人中心</button>
         </div>
-        {userProfile.role === 'boss' && <button onClick={() => setShowPostJob(true)} className="mt-8 flex items-center gap-2 text-blue-600 font-bold bg-blue-50 px-6 py-3 rounded-xl"><Plus size={20} /> 发布新招工</button>}
+        
+        {/* === 发布按钮修复 === */}
+        {userProfile.role === 'boss' && (
+          <button 
+             onClick={() => setShowPostJob(true)} 
+             className="fixed bottom-24 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-[999] hover:scale-105 transition-transform"
+          >
+             <Plus size={28} />
+          </button>
+        )}
       </div>
     );
   }
 
+  // 渲染卡片堆栈
   return (
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
       <Header onOpenProfile={() => setShowProfile(true)} />
       
-      <div className="px-4 mt-[60px] h-[calc(100vh-160px)] flex flex-col justify-center relative">
-        {cards.slice(currentIndex, currentIndex + 2).reverse().map((card, i) => {
-           const realIndex = currentIndex + (cards.slice(currentIndex, currentIndex + 2).length - 1 - i);
-           return (
-             <DraggableCard 
-                key={card.id} 
-                data={card} 
-                userRole={userProfile.role} 
-                isVip={isVip()} 
-                onSwipe={handleSwipe} 
-                index={i}
-             />
-           );
-        })}
+      {/* 卡片容器：居中、增加边距 */}
+      <div className="w-full h-full flex flex-col justify-center items-center relative px-4 pt-16 pb-24">
+        
+        {/* AnimatePresence 控制离场动画 */}
+        <AnimatePresence>
+          {cards.slice(currentIndex, currentIndex + 2).reverse().map((card, i) => {
+             // 只有最上面这张卡片(currentIndex)需要动画
+             const isTop = i === 1; // 因为reverse了，数组最后一张在最上面
+             return (
+               <DraggableCard 
+                  key={card.id} 
+                  data={card} 
+                  userRole={userProfile.role} 
+                  isVip={isVip()} 
+                  onSwipe={handleSwipe} 
+                  index={i}
+               />
+             );
+          })}
+        </AnimatePresence>
       </div>
 
       <div className="fixed bottom-6 left-0 right-0 max-w-md mx-auto px-10 flex items-center justify-between z-10 pointer-events-none">
@@ -267,8 +310,14 @@ function App() {
         </div>
       </div>
       
+      {/* === 发布按钮修复 (Z-Index 999) === */}
       {userProfile.role === 'boss' && (
-        <button onClick={() => setShowPostJob(true)} className="fixed bottom-24 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-30 hover:scale-105 transition-transform"><Plus size={28} /></button>
+        <button 
+           onClick={() => setShowPostJob(true)} 
+           className="fixed bottom-24 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center z-[999] hover:scale-105 transition-transform"
+        >
+           <Plus size={28} />
+        </button>
       )}
     </div>
   );

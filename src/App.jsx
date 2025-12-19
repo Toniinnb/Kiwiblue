@@ -19,7 +19,6 @@ const Header = ({ onOpenProfile }) => (
   </div>
 );
 
-// === 可拖拽卡片组件 ===
 const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-200, 200], [-15, 15]); 
@@ -50,19 +49,19 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
       style={{ x, rotate, opacity, position: 'absolute', width: '100%', height: '100%', zIndex: 100 - index }}
       exit={{ x: x.get() < 0 ? -1000 : 1000, opacity: 0, transition: { duration: 0.4 } }}
       onDragEnd={handleDragEnd}
-      // === 修改点 1: 卡片容器样式 ===
-      // max-w-[340px]: 限制最大宽度，防止太大
-      // h-full: 高度由父容器控制，不再自己撑满
+      // === 修改点 A: 限制最大宽度，高度由父容器控制 ===
       className="bg-white rounded-[1.5rem] shadow-2xl overflow-hidden flex flex-col border border-gray-100 w-full max-w-[340px]" 
     >
       <motion.div style={{ borderColor }} className="absolute inset-0 border-[4px] rounded-[1.5rem] pointer-events-none z-50 transition-colors" />
       
-      <div className="h-3/5 relative bg-gray-200 pointer-events-none">
+      {/* === 修改点 B: 图片区域高度缩小 === */}
+      {/* h-[40%] : 只占卡片高度的 40%，给文字留更多空间 */}
+      <div className="h-[40%] relative bg-gray-200 pointer-events-none">
         <div className="w-full h-full bg-gradient-to-b from-gray-100 to-gray-200 flex justify-center items-center text-gray-400">
-           {isJob ? <Building2 size={80} /> : <User size={80} />}
+           {isJob ? <Building2 size={64} /> : <User size={64} />}
         </div>
         
-        {/* === 修改点 2: VIP 移到左上角 === */}
+        {/* VIP / 隐藏标识 (左上角) */}
         {!isJob && (
             <div className="absolute top-4 left-4 z-20">
               {isVip ? (
@@ -77,20 +76,21 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
             </div>
         )}
 
-        {/* === 修改点 3: 地点移到右上角 (避免重叠) === */}
+        {/* 地点 (右上角) */}
         {data.location && (
           <div className="absolute top-4 right-4 bg-black/40 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1">
             <MapPin size={12} /> {data.location}
           </div>
         )}
         
-        {/* 热度保持右下角 */}
+        {/* 热度 (右下角) */}
         <div className="absolute bottom-4 right-4 bg-orange-500/90 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 shadow-sm">
            <Flame size={12} fill="white" /> {data.popularity || 0}
         </div>
       </div>
 
-      <div className="flex-1 p-5 flex flex-col pointer-events-none bg-white">
+      {/* === 修改点 C: 文字区域 (flex-1 自动填充剩余空间) === */}
+      <div className="flex-1 p-6 flex flex-col pointer-events-none bg-white">
         <div className="flex justify-between items-start mb-2">
           <div>
             <h2 className="text-xl font-bold text-gray-900 leading-tight mb-1">{displayTitle}</h2>
@@ -98,8 +98,7 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, index }) => {
           </div>
           <div className="text-blue-600 font-bold text-xl tracking-tight">{displayPrice}</div>
         </div>
-        <div className="flex flex-wrap gap-2 mt-2">{displayTags.slice(0,3).map((tag, i) => (<span key={i} className="px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-semibold rounded-lg">{tag}</span>))}</div>
-        {/* 底部提示语简化 */}
+        <div className="flex flex-wrap gap-2 mt-4">{displayTags.slice(0,3).map((tag, i) => (<span key={i} className="px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-semibold rounded-lg">{tag}</span>))}</div>
         <div className="mt-auto pt-2 flex items-center justify-center text-gray-300 text-xs">
            <p>左右滑动 或 点击下方按钮</p>
         </div>
@@ -183,16 +182,13 @@ function App() {
       if (userProfile.role === 'worker') {
         const limit = 20 + (userProfile.swipe_quota_extra || 0);
         const used = userProfile.swipes_used_today || 0;
-
         if (used >= limit) {
           alert(`查看次数已达上限！请邀请工友增加额度。`);
           window.location.reload(); 
           return;
         }
-
         await supabase.from('profiles').update({ swipes_used_today: used + 1 }).eq('id', session.user.id);
         await supabase.from('jobs').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id);
-        
         setUserProfile(prev => ({...prev, swipes_used_today: used + 1}));
         setCurrentIndex(curr => curr + 1);
         return;
@@ -205,17 +201,13 @@ function App() {
            setCurrentIndex(curr => curr + 1);
            return;
         }
-
         const cost = calculateCost(currentCard);
         const confirmUnlock = window.confirm(`解锁需扣 ${cost} 币，确认？`);
-        
-        if (!confirmUnlock) return; // 按钮模式下，取消就直接不动，不用刷新
-
+        if (!confirmUnlock) return; 
         if ((userProfile.credits || 0) < cost) {
           alert("❌ 余额不足，请充值！");
           return;
         }
-
         const { error } = await supabase.from('profiles').update({ credits: userProfile.credits - cost }).eq('id', session.user.id);
         if (!error) {
            await supabase.from('contacts').insert({ boss_id: session.user.id, worker_id: currentCard.id });
@@ -273,9 +265,8 @@ function App() {
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
       <Header onOpenProfile={() => setShowProfile(true)} />
       
-      {/* === 修改点 1: 卡片容器高度减小，居中，留出上下空间 === */}
-      {/* h-[60vh] 意味着卡片只占屏幕 60% 高度，上下留白 */}
-      <div className="w-full flex flex-col justify-center items-center relative px-4" style={{ height: 'calc(100vh - 160px)', marginTop: '60px' }}>
+      {/* === 修改点: 容器高度大幅减小，只占屏幕 55% 左右，完全不挡 Header === */}
+      <div className="w-full flex flex-col justify-center items-center relative px-4" style={{ height: '55vh', marginTop: '80px' }}>
         <AnimatePresence>
           {cards.slice(currentIndex, currentIndex + 2).reverse().map((card, i) => {
              return (
@@ -292,21 +283,9 @@ function App() {
         </AnimatePresence>
       </div>
 
-      {/* === 修改点 4: 底部按钮回归 (点赞/点叉) === */}
       <div className="fixed bottom-8 left-0 right-0 max-w-md mx-auto px-12 flex items-center justify-between z-20 pointer-events-auto">
-        {/* 左边的 Pass 按钮 */}
-        <button 
-          onClick={() => handleSwipe('left')} 
-          className="w-16 h-16 rounded-full bg-white shadow-xl border border-gray-200 text-gray-400 flex items-center justify-center hover:bg-gray-50 active:scale-95 transition-all"
-        >
-          <X size={32} />
-        </button>
-
-        {/* 右边的 Like/Unlock 按钮 */}
-        <button 
-          onClick={() => handleSwipe('right')} 
-          className={`w-16 h-16 rounded-full shadow-xl flex items-center justify-center text-white active:scale-95 transition-all ${isUserVip && !isJob ? 'bg-yellow-500 shadow-yellow-200' : 'bg-blue-600 shadow-blue-200'}`}
-        >
+        <button onClick={() => handleSwipe('left')} className="w-16 h-16 rounded-full bg-white shadow-xl border border-gray-200 text-gray-400 flex items-center justify-center hover:bg-gray-50 active:scale-95 transition-all"><X size={32} /></button>
+        <button onClick={() => handleSwipe('right')} className={`w-16 h-16 rounded-full shadow-xl flex items-center justify-center text-white active:scale-95 transition-all ${isUserVip && !isJob ? 'bg-yellow-500 shadow-yellow-200' : 'bg-blue-600 shadow-blue-200'}`}>
           {isJob ? <Heart size={30} fill="white" /> : isUserVip ? <Crown size={30} fill="white" /> : <DollarSign size={30} />}
         </button>
       </div>

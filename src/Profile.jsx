@@ -11,7 +11,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const [selectedWorker, setSelectedWorker] = useState(null);
 
   // 🔴 您的客服微信号 (请在这里修改)
-  const CUSTOMER_SERVICE_WECHAT = "Kiwi_Admin_001";
+  const CUSTOMER_SERVICE_WECHAT = "Thismour";
 
   useEffect(() => {
     if (userProfile.role === 'boss') fetchContacts();

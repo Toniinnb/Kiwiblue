@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from './supabase';
-import { User, Building2, Hammer, Loader2, Gift } from 'lucide-react';
+import { User, Building2, Hammer, Loader2, Gift, ArrowLeft } from 'lucide-react'; // 引入 ArrowLeft
 
 export default function Onboarding({ session, onComplete }) {
   const [step, setStep] = useState(1); 
@@ -15,7 +15,7 @@ export default function Onboarding({ session, onComplete }) {
     rate: '',    
     experience: '',
     orgType: 'employer',
-    referralCode: '' // 新增：邀请码
+    referralCode: ''
   });
 
   const handleRoleSelect = (selectedRole) => {
@@ -41,13 +41,11 @@ export default function Onboarding({ session, onComplete }) {
       experience: role === 'worker' ? formData.experience : null,
       is_verified: false,
       updated_at: new Date(),
-      // 默认次数
       swipes_used_today: 0,
       swipe_quota_extra: 0,
       last_active_date: new Date().toISOString().split('T')[0]
     };
 
-    // 1. 保存资料
     const { error } = await supabase.from('profiles').upsert(updates);
 
     if (error) {
@@ -56,9 +54,7 @@ export default function Onboarding({ session, onComplete }) {
       return;
     }
 
-    // 2. 处理推荐奖励 (调用我们刚才写的 SQL 函数)
     if (formData.referralCode) {
-      // 这里的 .rpc 就是调用后台函数，非常安全
       await supabase.rpc('apply_referral', {
         referrer_phone: formData.referralCode,
         new_user_role: role,
@@ -66,7 +62,7 @@ export default function Onboarding({ session, onComplete }) {
       });
     }
 
-    onComplete(); // 完成
+    onComplete(); 
     setLoading(false);
   };
 
@@ -89,10 +85,18 @@ export default function Onboarding({ session, onComplete }) {
     );
   }
 
+  // === 步骤 2 ===
   return (
     <div className="min-h-screen bg-white px-6 py-10 animate-slide-up">
       <div className="max-w-md mx-auto">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">完善{role === 'worker' ? '求职' : '招工'}资料</h2>
+        {/* === 新增：返回按钮 === */}
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={() => setStep(1)} className="p-2 -ml-2 rounded-full hover:bg-gray-100 text-gray-600">
+            <ArrowLeft size={24} />
+          </button>
+          <h2 className="text-2xl font-bold text-gray-900">完善{role === 'worker' ? '求职' : '招工'}资料</h2>
+        </div>
+        
         <form onSubmit={handleSubmit} className="space-y-5">
           <div><label className="block text-sm font-medium text-gray-700 mb-1">怎么称呼您？</label><input type="text" required className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
 
@@ -121,7 +125,6 @@ export default function Onboarding({ session, onComplete }) {
           <div><label className="block text-sm font-medium text-gray-700 mb-1">手机号 <span className="text-red-500">*</span></label><input type="tel" required placeholder="必填" className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 outline-none" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} /></div>
           <div><label className="block text-sm font-medium text-gray-700 mb-1">微信号 <span className="text-gray-400 font-normal">(选填)</span></label><input type="text" className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 outline-none" value={formData.wechat} onChange={e => setFormData({...formData, wechat: e.target.value})} /></div>
 
-          {/* 邀请码 */}
           <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100">
              <label className="block text-sm font-bold text-yellow-800 mb-1 flex items-center gap-2"><Gift size={16}/> 邀请人手机号 (选填)</label>
              <input type="tel" placeholder={role === 'boss' ? "填邀请人，立得 10 币奖励" : "填邀请人，立得 5 次额外机会"} className="w-full px-4 py-2 rounded-lg bg-white border border-yellow-200 outline-none text-sm" value={formData.referralCode} onChange={e => setFormData({...formData, referralCode: e.target.value})} />

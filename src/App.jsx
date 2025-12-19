@@ -19,16 +19,21 @@ const Header = ({ onOpenProfile }) => (
   </div>
 );
 
-// === 优化版卡片 ===
-const DraggableCard = ({ data, userRole, isVip, onSwipe, index, isInterested }) => {
+// === 卡片组件 ===
+const DraggableCard = ({ data, userRole, isVip, onSwipe, level, isInterested }) => {
   const x = useMotionValue(0);
-  const rotate = useTransform(x, [-200, 200], [-15, 15]); 
+  // 只有最顶层(level 0)的卡片才会跟随拖拽旋转，其他的保持静态角度
+  const dragRotate = useTransform(x, [-200, 200], [-15, 15]); 
   const opacity = useTransform(x, [-200, -150, 0, 150, 200], [0, 1, 1, 1, 0]);
   const borderColor = useTransform(x, [-200, 0, 200], ['#ef4444', '#ffffff', userRole === 'worker' ? '#22c55e' : '#eab308']);
   
   const handleDragEnd = (event, info) => {
-    if (info.offset.x > 100) onSwipe('right');
-    else if (info.offset.x < -100) onSwipe('left');
+    const threshold = 100; 
+    if (info.offset.x > threshold) {
+      onSwipe('right');
+    } else if (info.offset.x < -threshold) {
+      onSwipe('left');
+    }
   };
 
   const isJob = userRole === 'worker';
@@ -37,16 +42,32 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, index, isInterested }) 
   const displayPrice = isJob ? (data.wage || "面议") : (data.intro?.split(' ')?.[1] || "面议");
   const displayTags = data.tags || (data.experience ? [data.experience] : []);
 
-  // 堆叠效果样式: 第二张卡片稍微缩小并下移，增加层次感
-  const stackStyle = index === 1 ? { scale: 0.96, y: 15, zIndex: 90, opacity: 0.8 } : { zIndex: 100 };
+  // === 核心修改：堆叠样式计算 ===
+  // level 0 = 顶层, level 1 = 第二张, level 2 = 第三张
+  const isTop = level === 0;
+  
+  // 静态堆叠样式
+  const stackStyle = {
+    zIndex: 100 - level,
+    scale: 1 - level * 0.04, // 每一层缩小 4%
+    y: level * 12,           // 每一层向下移 12px
+    // 旋转角度：第一张由拖拽控制，后面两张固定角度 (一张左偏，一张右偏)
+    rotate: isTop ? dragRotate : (level % 2 === 0 ? 3 : -3),
+    opacity: 1 - level * 0.1, // 后面的稍微淡一点
+  };
 
   return (
     <motion.div
-      drag={index === 0 ? "x" : false} // 只有第一张能拖
+      drag={isTop ? "x" : false} // 只有顶层能拖
       dragSnapToOrigin={true} 
       dragElastic={0.7} 
       whileDrag={{ scale: 1.05, cursor: 'grabbing' }} 
-      style={{ x: index===0 ? x : 0, rotate: index===0 ? rotate : 0, opacity: index===0 ? opacity : 1, position: 'absolute', width: '100%', height: '100%', ...stackStyle }}
+      style={{ 
+        x: isTop ? x : 0, 
+        opacity: isTop ? opacity : stackStyle.opacity, 
+        position: 'absolute', width: '100%', height: '100%', 
+        ...stackStyle 
+      }}
       exit={{ x: x.get() < 0 ? -1000 : 1000, opacity: 0, transition: { duration: 0.4 } }}
       onDragEnd={handleDragEnd}
       className="bg-white rounded-[1.5rem] shadow-2xl overflow-hidden flex flex-col border border-gray-100 w-full max-w-[340px]" 
@@ -62,7 +83,6 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, index, isInterested }) 
           </div>
         )}
         
-        {/* === 智能排序：感兴趣标签 === */}
         {isInterested && (
            <div className="absolute top-0 left-0 right-0 bg-red-500 text-white text-center text-xs font-bold py-1 z-30 animate-pulse">
              🔥 对方发来了意向
@@ -140,7 +160,6 @@ function App() {
     setLoading(false);
   }
 
-  // === 核心：智能排序抓取 ===
   const fetchData = async () => {
     if (!session || !userProfile) return;
     try {
@@ -148,26 +167,18 @@ function App() {
         const { data } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
         setCards(data || []);
       } else {
-        // 1. 获取已解锁名单 (排除)
         const { data: unlocked } = await supabase.from('contacts').select('worker_id').eq('boss_id', session.user.id);
         const unlockedIds = unlocked ? unlocked.map(u => u.worker_id) : [];
-
-        // 2. 获取谁喜欢了我的工作 (智能排序)
         const { data: applicants } = await supabase.from('applications').select('worker_id').eq('boss_id', session.user.id);
         const interestedIds = applicants ? applicants.map(a => a.worker_id) : [];
 
-        // 3. 抓取所有工友
         let query = supabase.from('profiles').select('*').eq('role', 'worker').neq('status', 'busy').order('updated_at', { ascending: false });
         if (unlockedIds.length > 0) query = query.not('id', 'in', `(${unlockedIds.join(',')})`);
         
         const { data: allWorkers } = await query;
-        
         if (allWorkers) {
-           // 排序逻辑：感兴趣的排最前，其他的排后面
            const interested = allWorkers.filter(w => interestedIds.includes(w.id));
-           // 给这些人打上标记
            interested.forEach(w => w.is_interested = true);
-           
            const others = allWorkers.filter(w => !interestedIds.includes(w.id));
            setCards([...interested, ...others]);
         }
@@ -186,12 +197,10 @@ function App() {
 
   const handleSwipe = async (direction) => {
     const currentCard = cards[currentIndex];
-    
     if (direction === 'left') {
       setCurrentIndex(curr => curr + 1);
       return;
     }
-
     if (direction === 'right') {
       if (userProfile.role === 'worker') {
         const limit = 20 + (userProfile.swipe_quota_extra || 0);
@@ -203,17 +212,11 @@ function App() {
         }
         await supabase.from('profiles').update({ swipes_used_today: used + 1 }).eq('id', session.user.id);
         await supabase.from('jobs').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id);
-        
-        // === 记录申请记录 (用于智能排序) ===
-        // 假设每个工作都有 boss_id (我们在生成假数据时加了，如果是真数据也得有)
         if (currentCard.boss_id) {
            await supabase.from('applications').insert({ 
-             worker_id: session.user.id, 
-             job_id: currentCard.id,
-             boss_id: currentCard.boss_id 
+             worker_id: session.user.id, job_id: currentCard.id, boss_id: currentCard.boss_id 
            });
         }
-
         setUserProfile(prev => ({...prev, swipes_used_today: used + 1}));
         setCurrentIndex(curr => curr + 1);
         return;
@@ -280,6 +283,10 @@ function App() {
   const isJob = userProfile.role === 'worker';
   const isUserVip = isVip();
 
+  // === 渲染堆叠卡片 (Render 3张) ===
+  // 截取当前、下1、下2
+  const visibleCards = cards.slice(currentIndex, currentIndex + 3).reverse();
+
   return (
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
       <Header onOpenProfile={() => setShowProfile(true)} />
@@ -287,7 +294,10 @@ function App() {
       {/* 卡片区域 */}
       <div className="w-full flex flex-col justify-center items-center relative px-4" style={{ height: '55vh', marginTop: '80px' }}>
         <AnimatePresence>
-          {cards.slice(currentIndex, currentIndex + 2).reverse().map((card, i) => {
+          {visibleCards.map((card, i) => {
+             // i=0 是最底层(第三张), i=2 是最顶层(第一张)
+             // 计算层级 level: 0=顶层, 1=中间, 2=底层
+             const level = visibleCards.length - 1 - i;
              return (
                <DraggableCard 
                   key={card.id} 
@@ -295,6 +305,7 @@ function App() {
                   userRole={userProfile.role} 
                   isVip={isUserVip} 
                   onSwipe={handleSwipe} 
+                  level={level}
                   index={i} 
                   isInterested={card.is_interested}
                />
@@ -303,22 +314,21 @@ function App() {
         </AnimatePresence>
       </div>
 
-      {/* === UI 重构：底部悬浮控制台 === */}
-      {/* 这是一个悬浮在广告位上方的 Flex 容器，包含 Pass(X), Post(+), Like(♥) */}
-      <div className="fixed bottom-[140px] left-0 right-0 max-w-md mx-auto px-6 flex items-end justify-center gap-6 z-20 pointer-events-auto">
+      {/* === UI 重构：底部悬浮控制台 (Button Bar) === */}
+      <div className="fixed bottom-[140px] left-0 right-0 max-w-md mx-auto px-6 flex items-center justify-center gap-8 z-20 pointer-events-auto">
         
         {/* 左：不感兴趣 */}
         <button onClick={() => handleSwipe('left')} className="w-14 h-14 rounded-full bg-white shadow-xl border border-gray-100 text-gray-400 flex items-center justify-center hover:bg-gray-50 active:scale-95 transition-all">
           <X size={28} />
         </button>
 
-        {/* 中：发布按钮 (仅老板) - 做得最大最炫 */}
+        {/* 中：发布按钮 (仅老板) - 深灰色，一样大 */}
         {userProfile.role === 'boss' && (
            <button 
              onClick={() => setShowPostJob(true)} 
-             className="w-20 h-20 rounded-full bg-gradient-to-br from-gray-900 to-black text-white shadow-2xl shadow-gray-400 border-4 border-gray-100 flex items-center justify-center transform -translate-y-4 hover:scale-105 active:scale-95 transition-all"
+             className="w-14 h-14 rounded-full bg-gray-900 text-white shadow-xl flex items-center justify-center hover:bg-black active:scale-95 transition-all"
            >
-             <Plus size={36} />
+             <Plus size={28} />
            </button>
         )}
 
@@ -327,7 +337,7 @@ function App() {
           onClick={() => handleSwipe('right')} 
           className={`w-14 h-14 rounded-full shadow-xl flex items-center justify-center text-white active:scale-95 transition-all ${isUserVip && !isJob ? 'bg-yellow-500 shadow-yellow-200' : 'bg-blue-600 shadow-blue-200'}`}
         >
-          {isJob ? <Heart size={26} fill="white" /> : isUserVip ? <Crown size={26} fill="white" /> : <DollarSign size={26} />}
+          {isJob ? <Heart size={28} fill="white" /> : isUserVip ? <Crown size={28} fill="white" /> : <DollarSign size={28} />}
         </button>
 
       </div>

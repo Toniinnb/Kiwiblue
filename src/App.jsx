@@ -4,8 +4,8 @@ import Login from './Login';
 import Onboarding from './Onboarding';
 import PostJob from './PostJob'; 
 import Profile from './Profile'; 
-// 👇 这一行非常关键，请确保这一行和下面这行代码完全一致
-import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown, Megaphone, Bell } from 'lucide-react';
+// 👇 修改点：这里改成了 CheckCircle (去掉了 2)
+import { MapPin, Hammer, CheckCircle, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown, Megaphone, Bell } from 'lucide-react';
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 import { useConfig } from './ConfigContext';
 
@@ -268,9 +268,9 @@ function App() {
   if (currentIndex >= cards.length) {
     return (
       <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center">
-        {/* 👇 这里的 CheckCircle2 之前报错是因为没引入，现在肯定好了 */}
         <Header onOpenProfile={() => setShowProfile(true)} unreadCount={unreadCount} />
-        <CheckCircle2 size={64} className="text-gray-300 mb-4" />
+        {/* 👇 核心修复：这里换成了 CheckCircle，不再是 CheckCircle2 */}
+        <CheckCircle size={64} className="text-gray-300 mb-4" />
         <h2 className="text-xl font-bold text-gray-800">刷完了</h2>
         <p className="text-gray-500 mt-2 mb-6">暂时没有更多匹配。</p>
         <div className="flex flex-col gap-3 w-full max-w-xs">

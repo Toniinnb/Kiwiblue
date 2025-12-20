@@ -10,21 +10,17 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const [activeTab, setActiveTab] = useState('info'); 
   const [newPassword, setNewPassword] = useState('');
   const [passLoading, setPassLoading] = useState(false);
-  
-  const [contacts, setContacts] = useState([]); // 老板的已解锁名单
-  const [conversations, setConversations] = useState([]); // === 新增：对话列表 ===
-  
+  const [contacts, setContacts] = useState([]); 
+  const [conversations, setConversations] = useState([]); 
   const [loadingData, setLoadingData] = useState(false);
-  const [selectedWorker, setSelectedWorker] = useState(null); // 查看详情
-  const [chatUser, setChatUser] = useState(null); // 当前聊天对象
+  const [selectedWorker, setSelectedWorker] = useState(null); 
+  const [chatUser, setChatUser] = useState(null); 
 
-  // 初始化加载
   useEffect(() => {
     if (activeTab === 'contacts' && userProfile.role === 'boss') fetchContacts();
     if (activeTab === 'messages') fetchConversations();
   }, [activeTab]);
 
-  // === 1. 获取已解锁联系人 (仅老板) ===
   const fetchContacts = async () => {
     setLoadingData(true);
     const { data: relations } = await supabase.from('contacts').select('worker_id').eq('boss_id', session.user.id);
@@ -36,14 +32,12 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     setLoadingData(false);
   };
 
-  // === 2. 获取对话列表 (通用) ===
   const fetchConversations = async () => {
     setLoadingData(true);
     try {
-      // 拿到所有跟我有关的消息 (我是发送者 OR 我是接收者)
       const { data: messages } = await supabase
         .from('messages')
-        .select('sender_id, receiver_id, created_at, content')
+        .select('*') // 需要全部字段来计算未读
         .or(`sender_id.eq.${session.user.id},receiver_id.eq.${session.user.id}`)
         .order('created_at', { ascending: false });
 
@@ -53,7 +47,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
         return;
       }
 
-      // 提取出所有对话过的“对方ID”
       const otherUserIds = new Set();
       messages.forEach(msg => {
         if (msg.sender_id !== session.user.id) otherUserIds.add(msg.sender_id);
@@ -66,23 +59,35 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
         return;
       }
 
-      // 批量查询这些用户的资料
       const { data: users } = await supabase.from('profiles').select('*').in('id', Array.from(otherUserIds));
       
-      // 组装显示数据 (带上最后一条消息)
       const conversationList = users.map(user => {
-        const lastMsg = messages.find(m => m.sender_id === user.id || m.receiver_id === user.id);
-        return { ...user, last_msg: lastMsg?.content || '', last_time: lastMsg?.created_at };
+        const userMsgs = messages.filter(m => m.sender_id === user.id || m.receiver_id === user.id);
+        const lastMsg = userMsgs[0]; // 已经是按时间倒序了
+        // 计算未读数：发送者是对方，且我自己还没读
+        const unreadCount = userMsgs.filter(m => m.sender_id === user.id && m.receiver_id === session.user.id && !m.is_read).length;
+
+        return { 
+          ...user, 
+          last_msg: lastMsg?.content || '', 
+          last_time: lastMsg?.created_at,
+          unread_count: unreadCount 
+        };
       });
       
-      // 按时间排序
       conversationList.sort((a, b) => new Date(b.last_time) - new Date(a.last_time));
-
       setConversations(conversationList);
     } catch (error) {
       console.error("获取消息列表失败", error);
     }
     setLoadingData(false);
+  };
+
+  // === 核心：标记已读 ===
+  const openChat = async (user) => {
+    setChatUser(user);
+    // 数据库操作：把对方(sender)发给我的(receiver)消息全部标为已读
+    await supabase.from('messages').update({ is_read: true }).eq('sender_id', user.id).eq('receiver_id', session.user.id);
   };
 
   const handleAvatarUpdate = async (newUrl) => {
@@ -108,12 +113,10 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const inviteLink = `${window.location.origin}/?ref=${userProfile.phone}`;
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(inviteLink)}`;
 
-  // === 渲染：聊天窗口 ===
   if (chatUser) {
-    return <Chat session={session} otherUser={chatUser} onClose={() => { setChatUser(null); fetchConversations(); /* 关闭聊天时刷新列表 */ }} />;
+    return <Chat session={session} otherUser={chatUser} onClose={() => { setChatUser(null); fetchConversations(); }} />;
   }
 
-  // === 渲染：工友详情页 (老板查看) ===
   if (selectedWorker) {
     return (
       <div className="fixed inset-0 z-[60] bg-white flex flex-col animate-slide-in-right">
@@ -133,26 +136,11 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
              <h3 className="text-2xl font-bold text-gray-900">{selectedWorker.name}</h3>
              <p className="text-gray-500 mt-1">{selectedWorker.intro}</p>
           </div>
-          
           <div className="bg-white rounded-2xl p-6 shadow-sm space-y-4">
-             <div>
-               <label className="text-xs text-gray-400">手机号码</label>
-               <div className="text-xl font-bold text-gray-900 flex items-center justify-between">
-                 {selectedWorker.phone}
-                 <a href={`tel:${selectedWorker.phone}`} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm shadow-lg">拨打</a>
-               </div>
-             </div>
-             
-             {/* 详情页也可以直接发消息 */}
+             <div><label className="text-xs text-gray-400">手机号码</label><div className="text-xl font-bold text-gray-900 flex items-center justify-between">{selectedWorker.phone}<a href={`tel:${selectedWorker.phone}`} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm shadow-lg">拨打</a></div></div>
              <div className="pt-4 border-t border-gray-100">
-               <button 
-                 onClick={() => setChatUser(selectedWorker)}
-                 className="w-full py-3 bg-blue-50 text-blue-600 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-blue-100 transition-colors"
-               >
-                 <MessageCircle size={20} /> 发送消息
-               </button>
+               <button onClick={() => openChat(selectedWorker)} className="w-full py-3 bg-blue-50 text-blue-600 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-blue-100 transition-colors"><MessageCircle size={20} /> 发送消息</button>
              </div>
-
              {selectedWorker.wechat && <div className="pt-4 border-t border-gray-100"><label className="text-xs text-gray-400">微信号</label><div className="text-lg font-medium text-gray-900">{selectedWorker.wechat}</div></div>}
           </div>
         </div>
@@ -160,7 +148,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     );
   }
 
-  // === 渲染：个人中心主页 ===
   return (
     <div className="fixed inset-0 z-50 bg-gray-100 flex flex-col animate-slide-in-right">
       <div className="bg-white px-6 py-4 flex justify-between items-center shadow-sm">
@@ -175,60 +162,42 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
           <h3 className="text-xl font-bold text-gray-900">{userProfile?.name}</h3>
           <p className="text-gray-500 text-sm mt-1 mb-2">{userProfile?.role === 'boss' ? `${config.role_boss_label}` : `${config.role_worker_label}`}</p>
-          
           {userProfile?.role === 'boss' && <div className="inline-block px-4 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-bold mb-4">余额: {userProfile.credits || 0} {config.currency_name}</div>}
           {userProfile?.role === 'boss' && (
              <div className="mb-6"><button onClick={handleContactSupport} className="bg-gray-900 text-yellow-400 px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-gray-300 flex items-center gap-2 mx-auto animate-pulse active:scale-95 transition-transform"><Crown size={16} /> 开通 {config.vip_label}</button></div>
           )}
-          
           <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-100 rounded-xl p-4 text-left">
             <div className="flex justify-between items-start">
               <div>
                 <div className="flex items-center gap-2 text-yellow-800 font-bold mb-2"><Gift size={18} /> 邀请有奖</div>
-                <p className="text-xs text-yellow-700 mb-3 leading-relaxed">截图或复制链接分享给朋友，<br/>双方立享奖励！</p>
+                <p className="text-xs text-yellow-700 mb-3 leading-relaxed">分享链接，双方有奖！</p>
                 <button onClick={() => {navigator.clipboard.writeText(inviteLink); alert("链接已复制！");}} className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 shadow-sm"><Copy size={12}/> 复制链接</button>
               </div>
-              <div className="w-20 h-20 bg-white p-1 rounded-lg shadow-sm border border-yellow-200">
-                <img src={qrCodeUrl} alt="QR" className="w-full h-full object-contain" />
-              </div>
+              <div className="w-20 h-20 bg-white p-1 rounded-lg shadow-sm border border-yellow-200"><img src={qrCodeUrl} alt="QR" className="w-full h-full object-contain" /></div>
             </div>
           </div>
         </div>
 
-        {/* === 导航栏 (新增“消息”) === */}
         <div className="flex bg-gray-200 p-1 rounded-xl mb-6">
           <button onClick={() => setActiveTab('info')} className={`flex-1 py-2 text-xs font-medium rounded-lg ${activeTab === 'info' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>资料</button>
-          
-          {/* 消息入口：所有人都有 */}
-          <button onClick={() => setActiveTab('messages')} className={`flex-1 py-2 text-xs font-medium rounded-lg flex items-center justify-center gap-1 ${activeTab === 'messages' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
-             消息
-          </button>
-          
-          {/* 已解锁入口：仅老板有 */}
-          {userProfile?.role === 'boss' && (
-            <button onClick={() => setActiveTab('contacts')} className={`flex-1 py-2 text-xs font-medium rounded-lg ${activeTab === 'contacts' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>已解锁</button>
-          )}
-          
+          <button onClick={() => setActiveTab('messages')} className={`flex-1 py-2 text-xs font-medium rounded-lg flex items-center justify-center gap-1 ${activeTab === 'messages' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>消息</button>
+          {userProfile?.role === 'boss' && <button onClick={() => setActiveTab('contacts')} className={`flex-1 py-2 text-xs font-medium rounded-lg ${activeTab === 'contacts' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>已解锁</button>}
           <button onClick={() => setActiveTab('password')} className={`flex-1 py-2 text-xs font-medium rounded-lg ${activeTab === 'password' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>安全</button>
         </div>
 
-        {/* === Tab 内容: 资料 === */}
         {activeTab === 'info' && (
           <div className="space-y-4 animate-fade-in">
              <div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">手机号</div><div className="text-gray-900 font-medium">{userProfile?.phone}</div></div>
              {userProfile.role === 'worker' && (
                <div className="bg-white p-4 rounded-xl shadow-sm">
                  <div className="text-xs text-gray-400 mb-1">今日查看额度</div>
-                 <div className="flex justify-between items-center">
-                   <div className="font-bold text-blue-600 text-lg">{userProfile.swipes_used_today || 0} / {20 + (userProfile.swipe_quota_extra || 0)}</div>
-                   <div className="text-xs text-gray-400">去邀请朋友增加额度</div>
-                 </div>
+                 <div className="flex justify-between items-center"><div className="font-bold text-blue-600 text-lg">{userProfile.swipes_used_today || 0} / {20 + (userProfile.swipe_quota_extra || 0)}</div><div className="text-xs text-gray-400">去邀请朋友增加额度</div></div>
                </div>
              )}
           </div>
         )}
 
-        {/* === Tab 内容: 消息列表 (新增) === */}
+        {/* === 消息列表：带红点 === */}
         {activeTab === 'messages' && (
           <div className="space-y-3 animate-fade-in">
             {loadingData ? (
@@ -237,15 +206,16 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                <div className="text-center py-10 text-gray-400">
                   <MessageCircle size={48} className="mx-auto mb-2 opacity-20"/>
                   <p>暂无消息</p>
-                  <p className="text-xs mt-1">
-                    {userProfile.role === 'boss' ? '解锁工友后可发起聊天' : '等待老板发起聊天'}
-                  </p>
                </div>
             ) : (
               conversations.map(user => (
-                <div key={user.id} onClick={() => setChatUser(user)} className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-3 cursor-pointer active:scale-95 transition-transform">
-                  <div className="w-12 h-12 rounded-full bg-gray-100 overflow-hidden flex-shrink-0">
-                    {user.avatar_url ? <img src={user.avatar_url} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-gray-400 font-bold">{user.name?.[0]}</div>}
+                <div key={user.id} onClick={() => openChat(user)} className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-3 cursor-pointer active:scale-95 transition-transform relative">
+                  <div className="relative w-12 h-12 flex-shrink-0">
+                    <div className="w-12 h-12 rounded-full bg-gray-100 overflow-hidden">
+                       {user.avatar_url ? <img src={user.avatar_url} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-gray-400 font-bold">{user.name?.[0]}</div>}
+                    </div>
+                    {/* 列表里的红点 */}
+                    {user.unread_count > 0 && <span className="absolute top-0 right-0 w-5 h-5 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">{user.unread_count}</span>}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center mb-1">
@@ -260,7 +230,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
         )}
 
-        {/* === Tab 内容: 已解锁 (仅老板) === */}
         {activeTab === 'contacts' && (
           <div className="space-y-3 animate-fade-in">
             {loadingData ? <div className="flex justify-center py-4"><Loader2 className="animate-spin"/></div> : contacts.map(worker => (
@@ -274,11 +243,9 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                   <ChevronRight size={18} className="text-gray-300" />
                 </div>
             ))}
-            {contacts.length === 0 && !loadingData && <div className="text-center text-gray-400 py-10">还没解锁任何工友</div>}
           </div>
         )}
 
-        {/* === Tab 内容: 安全 === */}
         {activeTab === 'password' && (
           <div className="bg-white p-6 rounded-xl shadow-sm space-y-4 animate-fade-in">
             <input type="password" placeholder="新密码" className="w-full px-4 py-3 bg-gray-50 rounded-xl" value={newPassword} onChange={e => setNewPassword(e.target.value)} />

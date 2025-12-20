@@ -4,11 +4,12 @@ import Login from './Login';
 import Onboarding from './Onboarding';
 import PostJob from './PostJob'; 
 import Profile from './Profile'; 
+// 👇 这一行非常关键，请确保这一行和下面这行代码完全一致
 import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown, Megaphone, Bell } from 'lucide-react';
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 import { useConfig } from './ConfigContext';
 
-// === 顶部通知条组件 (新增) ===
+// === 顶部通知条组件 ===
 const Toast = ({ message, onClose, onClick }) => (
   <div 
     onClick={onClick}
@@ -25,7 +26,7 @@ const Toast = ({ message, onClose, onClick }) => (
   </div>
 );
 
-// === Header 组件 (升级：带红点) ===
+// === Header 组件 ===
 const Header = ({ onOpenProfile, unreadCount }) => {
   const config = useConfig();
   return (
@@ -38,7 +39,6 @@ const Header = ({ onOpenProfile, unreadCount }) => {
       </div>
       <button onClick={onOpenProfile} className="relative p-2 bg-gray-100 rounded-full text-gray-600 hover:bg-gray-200">
         <User size={20} />
-        {/* 红点提醒 */}
         {unreadCount > 0 && (
           <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 border-2 border-white rounded-full"></span>
         )}
@@ -47,7 +47,7 @@ const Header = ({ onOpenProfile, unreadCount }) => {
   );
 }
 
-// === 卡片组件 (保持不变) ===
+// === 卡片组件 ===
 const DraggableCard = ({ data, userRole, isVip, onSwipe, level, isInterested }) => {
   const config = useConfig();
   const x = useMotionValue(0);
@@ -113,7 +113,6 @@ function App() {
   const [cards, setCards] = useState([]); 
   const [loading, setLoading] = useState(true);
   
-  // === 新增：未读消息状态 & 弹窗 ===
   const [unreadCount, setUnreadCount] = useState(0);
   const [toastMsg, setToastMsg] = useState(null);
 
@@ -122,7 +121,7 @@ function App() {
       setSession(session);
       if (session) {
         checkProfile(session.user.id);
-        fetchUnreadCount(session.user.id); // 初始查一次未读
+        fetchUnreadCount(session.user.id);
       } else setLoading(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -133,15 +132,12 @@ function App() {
       }
     });
 
-    // === 核心：全局消息监听 ===
     const channel = supabase
       .channel('global_messages')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-        // 如果接收者是我
         if (session && payload.new.receiver_id === session.user.id) {
-          setUnreadCount(prev => prev + 1); // 红点+1
-          setToastMsg(payload.new.content); // 弹窗提醒
-          // 3秒后自动关闭弹窗
+          setUnreadCount(prev => prev + 1);
+          setToastMsg(payload.new.content);
           setTimeout(() => setToastMsg(null), 3000);
         }
       })
@@ -151,7 +147,7 @@ function App() {
       subscription.unsubscribe();
       supabase.removeChannel(channel);
     };
-  }, [session]); // session 变化时重新绑定
+  }, [session]);
 
   const fetchUnreadCount = async (userId) => {
     const { count } = await supabase.from('messages').select('*', { count: 'exact', head: true }).eq('receiver_id', userId).eq('is_read', false);
@@ -272,6 +268,7 @@ function App() {
   if (currentIndex >= cards.length) {
     return (
       <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center">
+        {/* 👇 这里的 CheckCircle2 之前报错是因为没引入，现在肯定好了 */}
         <Header onOpenProfile={() => setShowProfile(true)} unreadCount={unreadCount} />
         <CheckCircle2 size={64} className="text-gray-300 mb-4" />
         <h2 className="text-xl font-bold text-gray-800">刷完了</h2>
@@ -295,7 +292,6 @@ function App() {
 
   return (
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
-      {/* 弹窗提醒 */}
       {toastMsg && <Toast message={toastMsg} onClose={() => setToastMsg(null)} onClick={() => {setToastMsg(null); setShowProfile(true);}} />}
       
       <Header onOpenProfile={() => setShowProfile(true)} unreadCount={unreadCount} />

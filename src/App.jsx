@@ -4,61 +4,41 @@ import Login from './Login';
 import Onboarding from './Onboarding';
 import PostJob from './PostJob'; 
 import Profile from './Profile'; 
-// 👇 这里的引用列表已经清理干净，只保留 100% 确认存在的图标
-import { MapPin, Hammer, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown, Megaphone, Bell } from 'lucide-react';
+import { MapPin, Hammer, CheckCircle2, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown, Megaphone } from 'lucide-react';
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
-import { useConfig } from './ConfigContext';
+import { useConfig } from './ConfigContext'; // 引入 Hook
 
-// === 顶部通知条组件 ===
-const Toast = ({ message, onClose, onClick }) => (
-  <div 
-    onClick={onClick}
-    className="fixed top-4 left-4 right-4 z-[100] bg-white border-l-4 border-blue-500 shadow-xl rounded-lg p-4 flex items-center justify-between animate-slide-down cursor-pointer"
-  >
-    <div className="flex items-center gap-3">
-      <div className="bg-blue-100 p-2 rounded-full text-blue-600"><Bell size={18} /></div>
-      <div>
-        <p className="font-bold text-gray-800 text-sm">新消息提醒</p>
-        <p className="text-gray-500 text-xs">{message}</p>
-      </div>
-    </div>
-    <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="text-gray-400 hover:text-gray-600"><X size={16}/></button>
-  </div>
-);
-
-// === Header 组件 ===
-const Header = ({ onOpenProfile, unreadCount }) => {
+// 头部组件使用 config
+const Header = ({ onOpenProfile }) => {
   const config = useConfig();
   return (
     <div style={{height: '56px', background: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'fixed', top: 0, width: '100%', zIndex: 50, borderBottom: '1px solid #eee', padding: '0 16px', maxWidth: '450px', left: '50%', transform: 'translateX(-50%)'}}>
       <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
         <div style={{padding: '6px', borderRadius: '8px', background: '#2563EB', color: 'white', display: 'flex'}}>
+          {/* 如果有 Logo URL 则显示图片，否则显示 Hammer */}
           {config.logo_url ? <img src={config.logo_url} className="w-[18px] h-[18px] object-cover"/> : <Hammer size={18} />}
         </div>
         <span style={{fontSize: '18px', fontWeight: 'bold', color: '#111'}}>{config.app_name}</span>
       </div>
-      <button onClick={onOpenProfile} className="relative p-2 bg-gray-100 rounded-full text-gray-600 hover:bg-gray-200">
-        <User size={20} />
-        {/* 红点逻辑 */}
-        {unreadCount > 0 && (
-          <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 border-2 border-white rounded-full"></span>
-        )}
-      </button>
+      <button onClick={onOpenProfile} className="p-2 bg-gray-100 rounded-full text-gray-600 hover:bg-gray-200"><User size={20} /></button>
     </div>
   );
 }
 
-// === 卡片组件 ===
+// 卡片组件
 const DraggableCard = ({ data, userRole, isVip, onSwipe, level, isInterested }) => {
-  const config = useConfig();
+  const config = useConfig(); // 获取配置
   const x = useMotionValue(0);
   const dragRotate = useTransform(x, [-200, 200], [-15, 15]); 
   const borderColor = useTransform(x, [-200, 0, 200], ['#ef4444', '#ffffff', userRole === 'worker' ? '#22c55e' : '#eab308']);
   
   const handleDragEnd = (event, info) => {
     const threshold = 100; 
-    if (info.offset.x > threshold) onSwipe('right');
-    else if (info.offset.x < -threshold) onSwipe('left');
+    if (info.offset.x > threshold) {
+      onSwipe('right');
+    } else if (info.offset.x < -threshold) {
+      onSwipe('left');
+    }
   };
 
   const isJob = userRole === 'worker';
@@ -82,13 +62,33 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, level, isInterested }) 
       className="bg-white rounded-[1.5rem] shadow-2xl overflow-hidden flex flex-col border border-gray-100 w-full max-w-[340px]" 
     >
       <motion.div style={{ borderColor }} className="absolute inset-0 border-[4px] rounded-[1.5rem] pointer-events-none z-50 transition-colors" />
+      
       <div className="h-[40%] relative bg-gray-200 pointer-events-none overflow-hidden">
-        {data.avatar_url ? ( <img src={data.avatar_url} className="w-full h-full object-cover" alt="avatar" /> ) : ( <div className="w-full h-full bg-gradient-to-b from-gray-100 to-gray-200 flex justify-center items-center text-gray-400"> {isJob ? <Building2 size={64} /> : <User size={64} />} </div> )}
-        {isInterested && ( <div className="absolute top-0 left-0 right-0 bg-red-500 text-white text-center text-xs font-bold py-1 z-30 animate-pulse">🔥 对方发来了意向</div> )}
-        {!isJob && ( <div className="absolute top-4 left-4 z-20"> {isVip ? ( <div className="bg-yellow-400 text-yellow-900 px-3 py-1.5 rounded-full text-xs font-bold shadow-lg flex items-center gap-1 animate-pulse"><Crown size={14} fill="currentColor" /> {config.vip_label}</div> ) : ( <div className="bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-bold text-gray-600 shadow-sm flex items-center gap-1"><Lock size={12} /> 号码隐藏</div> )} </div> )}
+        {data.avatar_url ? (
+          <img src={data.avatar_url} className="w-full h-full object-cover" alt="avatar" />
+        ) : (
+          <div className="w-full h-full bg-gradient-to-b from-gray-100 to-gray-200 flex justify-center items-center text-gray-400">
+             {isJob ? <Building2 size={64} /> : <User size={64} />}
+          </div>
+        )}
+        
+        {isInterested && (
+           <div className="absolute top-0 left-0 right-0 bg-red-500 text-white text-center text-xs font-bold py-1 z-30 animate-pulse">🔥 对方发来了意向</div>
+        )}
+
+        {!isJob && (
+            <div className="absolute top-4 left-4 z-20">
+              {isVip ? (
+                <div className="bg-yellow-400 text-yellow-900 px-3 py-1.5 rounded-full text-xs font-bold shadow-lg flex items-center gap-1 animate-pulse"><Crown size={14} fill="currentColor" /> {config.vip_label}</div>
+              ) : (
+                <div className="bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-bold text-gray-600 shadow-sm flex items-center gap-1"><Lock size={12} /> 号码隐藏</div>
+              )}
+            </div>
+        )}
         {data.location && <div className="absolute top-4 right-4 bg-black/40 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1"><MapPin size={12} /> {data.location}</div>}
         <div className="absolute bottom-4 right-4 bg-orange-500/90 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 shadow-sm"><Flame size={12} fill="white" /> {data.popularity || 0}</div>
       </div>
+
       <div className="flex-1 p-6 flex flex-col pointer-events-none bg-white">
         <div className="flex justify-between items-start mb-2">
           <div>
@@ -113,47 +113,21 @@ function App() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [cards, setCards] = useState([]); 
   const [loading, setLoading] = useState(true);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [toastMsg, setToastMsg] = useState(null);
+  
+  // wechatId 现在直接从 config 获取，不再需要额外的 state 和 fetchConfig
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) {
-        checkProfile(session.user.id);
-        fetchUnreadCount(session.user.id);
-      } else setLoading(false);
+      if (session) checkProfile(session.user.id);
+      else setLoading(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) {
-        checkProfile(session.user.id);
-        fetchUnreadCount(session.user.id);
-      }
+      if (session) checkProfile(session.user.id);
     });
-
-    // 消息监听
-    const channel = supabase
-      .channel('global_messages')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-        if (session && payload.new.receiver_id === session.user.id) {
-          setUnreadCount(prev => prev + 1);
-          setToastMsg(payload.new.content);
-          setTimeout(() => setToastMsg(null), 3000);
-        }
-      })
-      .subscribe();
-
-    return () => {
-      subscription.unsubscribe();
-      supabase.removeChannel(channel);
-    };
-  }, [session]);
-
-  const fetchUnreadCount = async (userId) => {
-    const { count } = await supabase.from('messages').select('*', { count: 'exact', head: true }).eq('receiver_id', userId).eq('is_read', false);
-    setUnreadCount(count || 0);
-  };
+    return () => subscription.unsubscribe();
+  }, []);
 
   async function checkProfile(userId) {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
@@ -205,10 +179,12 @@ function App() {
 
   const handleSwipe = async (direction) => {
     const currentCard = cards[currentIndex];
+    
     if (direction === 'left') {
       setCurrentIndex(curr => curr + 1);
       return;
     }
+
     if (direction === 'right') {
       if (userProfile.role === 'worker') {
         const limit = 20 + (userProfile.swipe_quota_extra || 0);
@@ -264,14 +240,13 @@ function App() {
   if (!session) return <Login />;
   if (!userProfile) return <Onboarding session={session} onComplete={() => checkProfile(session.user.id)} />;
   if (showPostJob) return <PostJob session={session} onClose={() => setShowPostJob(false)} onPostSuccess={fetchData} />;
-  if (showProfile) return <Profile session={session} userProfile={userProfile} onClose={() => {setShowProfile(false); fetchUnreadCount(session.user.id);}} onLogout={async () => { await supabase.auth.signOut(); window.location.reload(); }} onProfileUpdate={() => checkProfile(session.user.id)} />;
+  if (showProfile) return <Profile session={session} userProfile={userProfile} onClose={() => setShowProfile(false)} onLogout={async () => { await supabase.auth.signOut(); window.location.reload(); }} onProfileUpdate={() => checkProfile(session.user.id)} />;
 
   if (currentIndex >= cards.length) {
     return (
       <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center">
-        <Header onOpenProfile={() => setShowProfile(true)} unreadCount={unreadCount} />
-        {/* 👇 终极修复：这里改成了 Hammer，因为 Hammer 100% 存在 */}
-        <Hammer size={64} className="text-gray-300 mb-4" />
+        <Header onOpenProfile={() => setShowProfile(true)} />
+        <CheckCircle2 size={64} className="text-gray-300 mb-4" />
         <h2 className="text-xl font-bold text-gray-800">刷完了</h2>
         <p className="text-gray-500 mt-2 mb-6">暂时没有更多匹配。</p>
         <div className="flex flex-col gap-3 w-full max-w-xs">
@@ -293,9 +268,7 @@ function App() {
 
   return (
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
-      {toastMsg && <Toast message={toastMsg} onClose={() => setToastMsg(null)} onClick={() => {setToastMsg(null); setShowProfile(true);}} />}
-      
-      <Header onOpenProfile={() => setShowProfile(true)} unreadCount={unreadCount} />
+      <Header onOpenProfile={() => setShowProfile(true)} />
       
       <div className="w-full flex flex-col justify-center items-center relative px-4" style={{ height: '55vh', marginTop: '80px' }}>
         <AnimatePresence>

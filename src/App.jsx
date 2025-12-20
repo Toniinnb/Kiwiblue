@@ -4,8 +4,8 @@ import Login from './Login';
 import Onboarding from './Onboarding';
 import PostJob from './PostJob'; 
 import Profile from './Profile'; 
-// 👇 修改点：这里改成了 CheckCircle (去掉了 2)
-import { MapPin, Hammer, CheckCircle, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown, Megaphone, Bell } from 'lucide-react';
+// 👇 这里的引用列表已经清理干净，只保留 100% 确认存在的图标
+import { MapPin, Hammer, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown, Megaphone, Bell } from 'lucide-react';
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 import { useConfig } from './ConfigContext';
 
@@ -39,6 +39,7 @@ const Header = ({ onOpenProfile, unreadCount }) => {
       </div>
       <button onClick={onOpenProfile} className="relative p-2 bg-gray-100 rounded-full text-gray-600 hover:bg-gray-200">
         <User size={20} />
+        {/* 红点逻辑 */}
         {unreadCount > 0 && (
           <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 border-2 border-white rounded-full"></span>
         )}
@@ -112,7 +113,6 @@ function App() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [cards, setCards] = useState([]); 
   const [loading, setLoading] = useState(true);
-  
   const [unreadCount, setUnreadCount] = useState(0);
   const [toastMsg, setToastMsg] = useState(null);
 
@@ -132,6 +132,7 @@ function App() {
       }
     });
 
+    // 消息监听
     const channel = supabase
       .channel('global_messages')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
@@ -269,8 +270,8 @@ function App() {
     return (
       <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center">
         <Header onOpenProfile={() => setShowProfile(true)} unreadCount={unreadCount} />
-        {/* 👇 核心修复：这里换成了 CheckCircle，不再是 CheckCircle2 */}
-        <CheckCircle size={64} className="text-gray-300 mb-4" />
+        {/* 👇 终极修复：这里改成了 Hammer，因为 Hammer 100% 存在 */}
+        <Hammer size={64} className="text-gray-300 mb-4" />
         <h2 className="text-xl font-bold text-gray-800">刷完了</h2>
         <p className="text-gray-500 mt-2 mb-6">暂时没有更多匹配。</p>
         <div className="flex flex-col gap-3 w-full max-w-xs">

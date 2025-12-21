@@ -31,59 +31,50 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     experience: userProfile.experience || ''
   });
 
+  // 初始化
   useEffect(() => {
     fetchTabCounts(); 
     if (activeTab === 'contacts' && userProfile.role === 'boss') fetchContacts();
     if (activeTab === 'messages') fetchConversations();
   }, [activeTab]);
 
-  // === 1. 获取 Tab 栏计数 (读新表) ===
+  // === 1. 获取 Tab 栏计数 (从会话表读) ===
   const fetchTabCounts = async () => {
     try {
-      // 直接查 conversations 表的未读总和，不用去 message 表数数了
-      const { data } = await supabase
-        .from('conversations')
-        .select('unread_count')
-        .eq('user_id', session.user.id);
-      
+      // 直接查 conversations 表的未读总和
+      const { data } = await supabase.from('conversations').select('unread_count').eq('user_id', session.user.id);
       const unreadSum = data ? data.reduce((sum, item) => sum + item.unread_count, 0) : 0;
       setTotalUnread(unreadSum);
 
       if (userProfile.role === 'boss') {
-        const { count } = await supabase
-          .from('contacts')
-          .select('*', { count: 'exact', head: true })
-          .eq('boss_id', session.user.id);
+        const { count } = await supabase.from('contacts').select('*', { count: 'exact', head: true }).eq('boss_id', session.user.id);
         setTotalUnlocked(count || 0);
       }
     } catch (e) { console.error(e); }
   };
 
-  // === 2. 获取消息列表 (读新表 - 极速模式) ===
+  // === 2. 获取消息列表 (从会话表读) ===
   const fetchConversations = async () => {
     setLoadingData(true);
     try {
-      // 联表查询：查会话表，同时把对方(contact_id)的资料(profiles)也查出来
+      // 联表查询：查会话表 + 对方资料
       const { data, error } = await supabase
         .from('conversations')
-        .select(`
-          *,
-          contact:contact_id ( id, name, avatar_url, role )
-        `)
+        .select(`*, contact:contact_id ( id, name, avatar_url, role, last_active_date )`)
         .eq('user_id', session.user.id)
         .order('last_time', { ascending: false });
 
       if (error) throw error;
 
-      // 格式化数据以适应 UI
       const formattedList = data.map(item => ({
-        id: item.contact.id, // 对方ID
+        id: item.contact.id,
         name: item.contact.name,
         avatar_url: item.contact.avatar_url,
         role: item.contact.role,
+        last_active_date: item.contact.last_active_date, // 用于判断在线状态
         last_msg: item.last_message,
         last_time: item.last_time,
-        unread_count: item.unread_count // 直接取数据库里的未读数
+        unread_count: item.unread_count
       }));
 
       setConversations(formattedList);
@@ -91,7 +82,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     setLoadingData(false);
   };
 
-  // === 3. 打开聊天 ===
+  // === 3. 打开聊天 (核心消红逻辑) ===
   const openChat = async (user) => {
     // A. 前端视觉立即消红
     setConversations(prev => prev.map(c => c.id === user.id ? { ...c, unread_count: 0 } : c));
@@ -101,20 +92,14 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     // B. 打开窗口
     setChatUser(user);
 
-    // C. 【关键】告诉数据库：我和这个人的未读数归零！
-    // 只要这一步执行了，下次刷新绝对是 0
-    await supabase
-      .from('conversations')
-      .update({ unread_count: 0 })
-      .eq('user_id', session.user.id)
-      .eq('contact_id', user.id);
+    // C. 数据库清零 (Fire and Forget)
+    await supabase.from('conversations').update({ unread_count: 0 }).eq('user_id', session.user.id).eq('contact_id', user.id);
   };
 
   // === 4. 关闭聊天 ===
   const handleCloseChat = () => {
     setChatUser(null);
-    // 刷新一下列表，确保最新消息显示出来
-    fetchConversations(); 
+    fetchConversations(); // 刷新列表以获取最新消息内容
   };
 
   // === 保存资料 ===

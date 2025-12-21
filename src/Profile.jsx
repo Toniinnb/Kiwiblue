@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
+// 👇 引入了 Edit3 (编辑图标) 和 Save (保存图标)
 import { X, Loader2, ChevronRight, Gift, Copy, Crown, MessageCircle, User, Building2, Edit3, Save } from 'lucide-react';
 import AvatarUpload from './AvatarUpload'; 
 import Chat from './Chat'; 
@@ -10,35 +11,32 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const [activeTab, setActiveTab] = useState('info'); 
   const [newPassword, setNewPassword] = useState('');
   const [passLoading, setPassLoading] = useState(false);
+  
   const [contacts, setContacts] = useState([]); 
   const [conversations, setConversations] = useState([]); 
   const [loadingData, setLoadingData] = useState(false);
   const [selectedWorker, setSelectedWorker] = useState(null); 
   const [chatUser, setChatUser] = useState(null); 
 
+  // === 新增：编辑模式状态 ===
+  const [isEditing, setIsEditing] = useState(false);
+  // 表单数据初始化
+  const [editForm, setEditForm] = useState({
+    name: userProfile.name || '',
+    phone: userProfile.phone || '',
+    wechat: userProfile.wechat || '',
+    intro: userProfile.intro || '',
+    experience: userProfile.experience || ''
+  });
+
+  // 初始化加载
   useEffect(() => {
     if (activeTab === 'contacts' && userProfile.role === 'boss') fetchContacts();
     if (activeTab === 'messages') fetchConversations();
   }, [activeTab]);
 
-// ... 放在 const [chatUser, setChatUser] = ... 这一行下面
-
-  // 1. 编辑模式开关
-  const [isEditing, setIsEditing] = useState(false);
-  
-  // 2. 表单数据 (默认填入当前资料)
-  const [editForm, setEditForm] = useState({
-    name: userProfile.name || '',
-    phone: userProfile.phone || '',
-    wechat: userProfile.wechat || '',
-    intro: userProfile.intro || '', // 工种
-    experience: userProfile.experience || '', // 经验
-    wage: userProfile.wage || '' // 薪资 (如果数据库有这个字段)
-  });
-
-  // 3. 保存函数
+  // === 1. 保存资料逻辑 (新增) ===
   const handleSaveProfile = async () => {
-    // 简单校验
     if (!editForm.name || !editForm.phone) return alert("称呼和手机号不能为空");
 
     setLoadingData(true);
@@ -48,19 +46,19 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
       wechat: editForm.wechat,
       intro: editForm.intro,
       experience: editForm.experience,
-      // 如果您的数据库还没 wage 字段，可以不更新这一行，或者把 intro 当作工种+薪资
     }).eq('id', session.user.id);
 
     if (error) {
       alert("保存失败: " + error.message);
     } else {
-      await onProfileUpdate(); // 刷新父组件数据
-      setIsEditing(false); // 退出编辑模式
-      alert("资料修改成功！");
+      await onProfileUpdate(); // 通知父组件刷新数据
+      setIsEditing(false);     // 退出编辑模式
+      alert("资料已更新！");
     }
     setLoadingData(false);
   };
-  
+
+  // === 2. 获取已解锁联系人 ===
   const fetchContacts = async () => {
     setLoadingData(true);
     const { data: relations } = await supabase.from('contacts').select('worker_id').eq('boss_id', session.user.id);
@@ -72,12 +70,13 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     setLoadingData(false);
   };
 
+  // === 3. 获取消息列表 (带未读红点) ===
   const fetchConversations = async () => {
     setLoadingData(true);
     try {
       const { data: messages } = await supabase
         .from('messages')
-        .select('*') // 需要全部字段来计算未读
+        .select('*')
         .or(`sender_id.eq.${session.user.id},receiver_id.eq.${session.user.id}`)
         .order('created_at', { ascending: false });
 
@@ -103,8 +102,8 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
       
       const conversationList = users.map(user => {
         const userMsgs = messages.filter(m => m.sender_id === user.id || m.receiver_id === user.id);
-        const lastMsg = userMsgs[0]; // 已经是按时间倒序了
-        // 计算未读数：发送者是对方，且我自己还没读
+        const lastMsg = userMsgs[0];
+        // 计算未读数：发送者是对方，接收者是我，且未读
         const unreadCount = userMsgs.filter(m => m.sender_id === user.id && m.receiver_id === session.user.id && !m.is_read).length;
 
         return { 
@@ -123,10 +122,10 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     setLoadingData(false);
   };
 
-  // === 核心：标记已读 ===
+  // === 4. 打开聊天并标记已读 ===
   const openChat = async (user) => {
     setChatUser(user);
-    // 数据库操作：把对方(sender)发给我的(receiver)消息全部标为已读
+    // 立即把对方发给我的消息标为已读
     await supabase.from('messages').update({ is_read: true }).eq('sender_id', user.id).eq('receiver_id', session.user.id);
   };
 
@@ -153,10 +152,12 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const inviteLink = `${window.location.origin}/?ref=${userProfile.phone}`;
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(inviteLink)}`;
 
+  // === 渲染：聊天窗口 ===
   if (chatUser) {
     return <Chat session={session} otherUser={chatUser} onClose={() => { setChatUser(null); fetchConversations(); }} />;
   }
 
+  // === 渲染：查看他人详情 (老板视角) ===
   if (selectedWorker) {
     return (
       <div className="fixed inset-0 z-[60] bg-white flex flex-col animate-slide-in-right">
@@ -188,6 +189,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     );
   }
 
+  // === 渲染：个人中心主入口 ===
   return (
     <div className="fixed inset-0 z-50 bg-gray-100 flex flex-col animate-slide-in-right">
       <div className="bg-white px-6 py-4 flex justify-between items-center shadow-sm">
@@ -196,16 +198,19 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
+        {/* 顶部概览卡片 */}
         <div className="bg-white rounded-2xl p-6 shadow-sm mb-6 text-center relative">
           <div className="mb-3 flex justify-center">
             <AvatarUpload url={userProfile.avatar_url} onUpload={handleAvatarUpdate} role={userProfile.role} size={80} />
           </div>
           <h3 className="text-xl font-bold text-gray-900">{userProfile?.name}</h3>
           <p className="text-gray-500 text-sm mt-1 mb-2">{userProfile?.role === 'boss' ? `${config.role_boss_label}` : `${config.role_worker_label}`}</p>
+          
           {userProfile?.role === 'boss' && <div className="inline-block px-4 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-bold mb-4">余额: {userProfile.credits || 0} {config.currency_name}</div>}
           {userProfile?.role === 'boss' && (
              <div className="mb-6"><button onClick={handleContactSupport} className="bg-gray-900 text-yellow-400 px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-gray-300 flex items-center gap-2 mx-auto animate-pulse active:scale-95 transition-transform"><Crown size={16} /> 开通 {config.vip_label}</button></div>
           )}
+          
           <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-100 rounded-xl p-4 text-left">
             <div className="flex justify-between items-start">
               <div>
@@ -218,6 +223,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
         </div>
 
+        {/* 导航 Tab */}
         <div className="flex bg-gray-200 p-1 rounded-xl mb-6">
           <button onClick={() => setActiveTab('info')} className={`flex-1 py-2 text-xs font-medium rounded-lg ${activeTab === 'info' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>资料</button>
           <button onClick={() => setActiveTab('messages')} className={`flex-1 py-2 text-xs font-medium rounded-lg flex items-center justify-center gap-1 ${activeTab === 'messages' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>消息</button>
@@ -225,9 +231,10 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           <button onClick={() => setActiveTab('password')} className={`flex-1 py-2 text-xs font-medium rounded-lg ${activeTab === 'password' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>安全</button>
         </div>
 
+        {/* === Tab: 资料 (含编辑功能) === */}
         {activeTab === 'info' && (
           <div className="space-y-4 animate-fade-in">
-             {/* === 顶部：编辑/保存按钮 === */}
+             {/* 编辑切换按钮 */}
              <div className="flex justify-end mb-2">
                {isEditing ? (
                  <button onClick={handleSaveProfile} className="flex items-center gap-1 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md hover:bg-green-700 transition-all">
@@ -240,7 +247,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                )}
              </div>
 
-             {/* === 称呼 === */}
              <div className="bg-white p-4 rounded-xl shadow-sm">
                <div className="text-xs text-gray-400 mb-1">怎么称呼</div>
                {isEditing ? (
@@ -250,7 +256,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                )}
              </div>
 
-             {/* === 手机号 === */}
              <div className="bg-white p-4 rounded-xl shadow-sm">
                <div className="text-xs text-gray-400 mb-1">手机号</div>
                {isEditing ? (
@@ -260,7 +265,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                )}
              </div>
 
-             {/* === 微信号 === */}
              <div className="bg-white p-4 rounded-xl shadow-sm">
                <div className="text-xs text-gray-400 mb-1">微信号 (选填)</div>
                {isEditing ? (
@@ -270,7 +274,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                )}
              </div>
 
-             {/* === 工友专属字段 === */}
+             {/* 工友专属字段 */}
              {userProfile.role === 'worker' && (
                <>
                  <div className="bg-white p-4 rounded-xl shadow-sm">
@@ -290,25 +294,21 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                      <div className="text-gray-900 font-medium">{userProfile.experience || '未填写'}</div>
                    )}
                  </div>
+
+                 {/* 额度 */}
+                 <div className="bg-white p-4 rounded-xl shadow-sm mt-4 opacity-80">
+                   <div className="text-xs text-gray-400 mb-1">今日查看额度</div>
+                   <div className="flex justify-between items-center">
+                     <div className="font-bold text-blue-600 text-lg">{userProfile.swipes_used_today || 0} / {20 + (userProfile.swipe_quota_extra || 0)}</div>
+                     <div className="text-xs text-gray-400">去邀请朋友增加额度</div>
+                   </div>
+                 </div>
                </>
              )}
-
-             {/* 额度显示 (保持不变) */}
-             {userProfile.role === 'worker' && (
-               <div className="bg-white p-4 rounded-xl shadow-sm mt-4 opacity-80">
-                 <div className="text-xs text-gray-400 mb-1">今日查看额度</div>
-                 <div className="flex justify-between items-center">
-                   <div className="font-bold text-blue-600 text-lg">{userProfile.swipes_used_today || 0} / {20 + (userProfile.swipe_quota_extra || 0)}</div>
-                   <div className="text-xs text-gray-400">邀请朋友可增加</div>
-                 </div>
-               </div>
-             )}
-          </div>
-        )}
           </div>
         )}
 
-        {/* === 消息列表：带红点 === */}
+        {/* === Tab: 消息列表 (带红点) === */}
         {activeTab === 'messages' && (
           <div className="space-y-3 animate-fade-in">
             {loadingData ? (
@@ -325,7 +325,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                     <div className="w-12 h-12 rounded-full bg-gray-100 overflow-hidden">
                        {user.avatar_url ? <img src={user.avatar_url} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-gray-400 font-bold">{user.name?.[0]}</div>}
                     </div>
-                    {/* 列表里的红点 */}
+                    {/* 列表红点 */}
                     {user.unread_count > 0 && <span className="absolute top-0 right-0 w-5 h-5 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">{user.unread_count}</span>}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -341,6 +341,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
         )}
 
+        {/* === Tab: 已解锁 (仅老板) === */}
         {activeTab === 'contacts' && (
           <div className="space-y-3 animate-fade-in">
             {loadingData ? <div className="flex justify-center py-4"><Loader2 className="animate-spin"/></div> : contacts.map(worker => (
@@ -357,6 +358,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
         )}
 
+        {/* === Tab: 安全 === */}
         {activeTab === 'password' && (
           <div className="bg-white p-6 rounded-xl shadow-sm space-y-4 animate-fade-in">
             <input type="password" placeholder="新密码" className="w-full px-4 py-3 bg-gray-50 rounded-xl" value={newPassword} onChange={e => setNewPassword(e.target.value)} />

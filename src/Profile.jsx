@@ -33,7 +33,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
 
   // === 初始化加载 ===
   useEffect(() => {
-    fetchTabCounts(); // 进来先查一下总数
+    fetchTabCounts(); 
     if (activeTab === 'contacts' && userProfile.role === 'boss') fetchContacts();
     if (activeTab === 'messages') fetchConversations();
   }, [activeTab]);
@@ -41,7 +41,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   // === 1. 获取 Tab 栏的计数 ===
   const fetchTabCounts = async () => {
     try {
-      // 查未读消息总数
       const { count: unreadCount } = await supabase
         .from('messages')
         .select('*', { count: 'exact', head: true })
@@ -49,7 +48,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
         .eq('is_read', false);
       setTotalUnread(unreadCount || 0);
 
-      // 查已解锁总数 (仅老板)
       if (userProfile.role === 'boss') {
         const { count: unlockedCount } = await supabase
           .from('contacts')
@@ -57,9 +55,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           .eq('boss_id', session.user.id);
         setTotalUnlocked(unlockedCount || 0);
       }
-    } catch (e) {
-      console.error("获取计数失败", e);
-    }
+    } catch (e) { console.error(e); }
   };
 
   // === 2. 获取消息列表 ===
@@ -95,7 +91,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
       const conversationList = users.map(user => {
         const userMsgs = messages.filter(m => m.sender_id === user.id || m.receiver_id === user.id);
         const lastMsg = userMsgs[0];
-        // 计算未读数
         const unreadCount = userMsgs.filter(m => m.sender_id === user.id && m.receiver_id === session.user.id && !m.is_read).length;
 
         return { 
@@ -108,43 +103,47 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
       
       conversationList.sort((a, b) => new Date(b.last_time) - new Date(a.last_time));
       setConversations(conversationList);
-    } catch (error) {
-      console.error("获取消息列表失败", error);
-    }
+    } catch (error) { console.error(error); }
     setLoadingData(false);
   };
 
-  // === 3. 打开聊天 (核心修复：强力消红) ===
-  const openChat = async (user) => {
-    // A. 前端暴力消红：不管数据库怎么样，界面上先把这个人的红点干掉
+  // === 3. 打开聊天 (只做本地视觉更新，不发请求) ===
+  const openChat = (user) => {
+    // A. 前端视觉欺骗：立即把红点归零
     const targetUser = conversations.find(c => c.id === user.id);
     const countToMinus = targetUser ? targetUser.unread_count : 0;
 
-    // 1. 更新列表红点
     setConversations(prev => prev.map(c => c.id === user.id ? { ...c, unread_count: 0 } : c));
-    // 2. 更新 Tab 总数
     setTotalUnread(prev => Math.max(0, prev - countToMinus));
 
-    // B. 打开聊天窗口
+    // B. 打开窗口
     setChatUser(user);
-
-    // C. 后台静默更新数据库 (把所有该用户发给我的消息标为已读)
-    await supabase
-      .from('messages')
-      .update({ is_read: true })
-      .eq('sender_id', user.id)
-      .eq('receiver_id', session.user.id);
+    
+    // 注意：这里不发数据库更新，移到关闭时统一处理，防止网络拥堵
   };
 
-  // === 4. 关闭聊天时的逻辑 ===
-  const handleCloseChat = () => {
+  // === 4. 关闭聊天 (核心修复：排队逻辑) ===
+  const handleCloseChat = async () => {
+    // 1. 先记录下刚才在跟谁聊
+    const talkingToUser = chatUser;
+    
+    // 2. 关闭窗口 (视觉上先关掉，用户体验好)
     setChatUser(null);
-    // 为了防止旧数据缓存，稍微等一下再刷新列表，或者依赖刚才的本地更新
-    // 这里我们选择重新抓取，确保数据绝对同步
-    setTimeout(() => {
-      fetchConversations();
-      fetchTabCounts();
-    }, 300); 
+
+    if (talkingToUser) {
+      // 3. 【关键一步】强行等待数据库更新完毕
+      // 只有这一行执行完了，数据库里的 is_read 才会变成 true
+      await supabase
+        .from('messages')
+        .update({ is_read: true })
+        .eq('sender_id', talkingToUser.id)
+        .eq('receiver_id', session.user.id);
+      
+      // 4. 数据库改完了，现在去刷新列表
+      // 这时候拉回来的数据，一定是 0 未读，红点绝不会复活
+      await fetchConversations();
+      await fetchTabCounts();
+    }
   };
 
   // === 5. 保存资料 ===
@@ -159,9 +158,8 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
       experience: editForm.experience,
     }).eq('id', session.user.id);
 
-    if (error) {
-      alert("保存失败: " + error.message);
-    } else {
+    if (error) alert("保存失败: " + error.message);
+    else {
       await onProfileUpdate(); 
       setIsEditing(false);     
       alert("资料已更新！");
@@ -205,7 +203,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
 
   // === 渲染：聊天窗口 ===
   if (chatUser) {
-    // 传递 handleCloseChat 而不是简单的 close
+    // 关键：传入新的 handleCloseChat
     return <Chat session={session} otherUser={chatUser} onClose={handleCloseChat} />;
   }
 
@@ -274,7 +272,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
         </div>
 
-        {/* === Tab 导航栏 (优化：数字显示) === */}
+        {/* 导航 Tab (显数版) */}
         <div className="flex bg-gray-200 p-1 rounded-xl mb-6 overflow-x-auto">
           <button onClick={() => setActiveTab('info')} className={`flex-1 py-2 px-1 text-xs font-medium rounded-lg whitespace-nowrap ${activeTab === 'info' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
             资料
@@ -311,7 +309,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                  </button>
                )}
              </div>
-             {/* 表单部分与之前一致，此处省略重复代码以确保准确覆盖，直接用上文逻辑 */}
              <div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">怎么称呼</div>{isEditing ? <input type="text" className="w-full border-b border-gray-200 py-1 outline-none font-medium" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} /> : <div className="text-gray-900 font-medium">{userProfile.name}</div>}</div>
              <div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">手机号</div>{isEditing ? <input type="tel" className="w-full border-b border-gray-200 py-1 outline-none font-medium" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} /> : <div className="text-gray-900 font-medium">{userProfile.phone}</div>}</div>
              <div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">微信号 (选填)</div>{isEditing ? <input type="text" className="w-full border-b border-gray-200 py-1 outline-none font-medium" value={editForm.wechat} onChange={e => setEditForm({...editForm, wechat: e.target.value})} /> : <div className="text-gray-900 font-medium">{userProfile.wechat || '未填写'}</div>}</div>
@@ -319,7 +316,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
         )}
 
-        {/* Tab 内容: 消息 (优化红点) */}
+        {/* Tab 内容: 消息 */}
         {activeTab === 'messages' && (
           <div className="space-y-3 animate-fade-in">
             {loadingData ? (

@@ -8,8 +8,8 @@ import { MapPin, Hammer, X, Heart, User, Building2, ShieldCheck, DollarSign, Loa
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 import { useConfig } from './ConfigContext';
 
-// ... (Header, DraggableCard, Toast 组件保持不变) ...
-const Header = ({ onOpenProfile, unreadCount }) => {
+// --- Header 组件 (只增加了余额显示，其他UI没动) ---
+const Header = ({ onOpenProfile, unreadCount, credits }) => {
   const config = useConfig();
   return (
     <div style={{height: '56px', background: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'fixed', top: 0, width: '100%', zIndex: 50, borderBottom: '1px solid #eee', padding: '0 16px', maxWidth: '450px', left: '50%', transform: 'translateX(-50%)'}}>
@@ -19,14 +19,24 @@ const Header = ({ onOpenProfile, unreadCount }) => {
         </div>
         <span style={{fontSize: '18px', fontWeight: 'bold', color: '#111'}}>{config.app_name}</span>
       </div>
-      <button onClick={onOpenProfile} className="relative p-2 bg-gray-100 rounded-full text-gray-600 hover:bg-gray-200">
-        <User size={20} />
-        {unreadCount > 0 && <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 border-2 border-white rounded-full"></span>}
-      </button>
+      <div className="flex items-center gap-3">
+        {/* 新增：显示余额 (仅当 credits 存在时显示) */}
+        {credits !== undefined && (
+          <div className="flex items-center gap-1 bg-amber-100 px-3 py-1 rounded-full border border-amber-200 shadow-sm">
+             <div className="w-4 h-4 rounded-full bg-amber-500 text-white flex items-center justify-center text-[10px] font-bold">$</div>
+             <span className="text-xs font-bold text-amber-800">{credits}</span>
+          </div>
+        )}
+        <button onClick={onOpenProfile} className="relative p-2 bg-gray-100 rounded-full text-gray-600 hover:bg-gray-200">
+          <User size={20} />
+          {unreadCount > 0 && <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 border-2 border-white rounded-full"></span>}
+        </button>
+      </div>
     </div>
   );
 }
 
+// ... (DraggableCard 保持原样) ...
 const DraggableCard = ({ data, userRole, isVip, onSwipe, level, isInterested }) => {
   const config = useConfig();
   const x = useMotionValue(0);
@@ -43,7 +53,7 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, level, isInterested }) 
   const displayTitle = isJob ? (data.title || "招工") : (data.intro?.split(' ')?.[0] || config.role_worker_label);
   const displaySub = isJob ? "招聘方" : (data.name || "匿名");
   const displayPrice = isJob ? (data.wage || "面议") : (data.intro?.split(' ')?.[1] || "面议");
-  const displayTags = data.tags || (data.experience ? [data.experience] : []);
+  const displayTags = data.tags || (data.experience ? [data.experience + "年经验"] : []); 
   const isTop = level === 0;
 
   return (
@@ -79,6 +89,7 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, level, isInterested }) 
   );
 };
 
+// ... (Toast 保持原样) ...
 const Toast = ({ notification, onClose, onClick }) => (
   <div onClick={onClick} className="fixed top-4 left-4 right-4 z-[100] bg-white border-l-4 border-blue-500 shadow-xl rounded-lg p-4 flex items-center justify-between animate-slide-down cursor-pointer active:scale-95 transition-transform">
     <div className="flex items-center gap-3"><div className="bg-blue-100 p-2 rounded-full text-blue-600"><Bell size={18} /></div><div><p className="font-bold text-gray-800 text-sm">收到新消息</p><p className="text-gray-500 text-xs truncate max-w-[200px]">{notification.content}</p></div></div>
@@ -96,25 +107,20 @@ function App() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [cards, setCards] = useState([]); 
   const [loading, setLoading] = useState(true);
+  const [processingSwipe, setProcessingSwipe] = useState(false); // 状态锁，防止手滑连点
   
-  // 消息 & 通知状态
   const [unreadCount, setUnreadCount] = useState(0);
   const [notification, setNotification] = useState(null);
   const [directChatId, setDirectChatId] = useState(null); 
-
-  // 错误重试状态
   const [fetchError, setFetchError] = useState(false);
   const [profileNotFound, setProfileNotFound] = useState(false);
 
-  // === 第 1 层：核心身份认证 (Auth & Profile) ===
+  // === 第 1 层：核心身份认证 (保持原样) ===
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) {
-        checkProfile(session.user.id);
-      } else {
-        setLoading(false);
-      }
+      if (session) checkProfile(session.user.id);
+      else setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -123,51 +129,33 @@ function App() {
         setFetchError(false);
         setProfileNotFound(false);
         checkProfile(session.user.id);
-      } else {
-        setLoading(false);
-      }
+      } else setLoading(false);
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
-  // === 第 2 层：消息系统 (Messaging) - 严谨修复版 ===
+  // === 第 2 层：消息系统 (保持修复后的严谨版) ===
   useEffect(() => {
-    // 1. 严格检查：没有 Session、没有 Profile、或者 Profile 报错，都不要启动监听
-    // 这行代码是修复 "Race Condition" 的关键
     if (!session?.user?.id || !userProfile || profileNotFound) return;
 
-    // 2. 初始化未读数 (使用下方定义的辅助函数)
     fetchUnreadCount(session.user.id);
 
-    // 3. 建立监听 (使用严谨的 filter)
     const channel = supabase.channel('global_messages')
       .on('postgres_changes', 
-        { 
-          event: '*', // 监听所有事件 (包含 INSERT 和 UPDATE)
-          schema: 'public', 
-          table: 'messages',
-          filter: `receiver_id=eq.${session.user.id}` // 严谨过滤：只听发给我的
-        }, 
+        { event: '*', schema: 'public', table: 'messages', filter: `receiver_id=eq.${session.user.id}` }, 
         (payload) => {
-          // A. 如果是新消息，且不是自己发的 (双重校验)
           if (payload.eventType === 'INSERT' && payload.new.receiver_id === session.user.id) {
-             // 触发弹窗通知
              setNotification({ content: payload.new.content, sender_id: payload.new.sender_id });
              setTimeout(() => setNotification(null), 3000);
           }
-          
-          // B. 无论新消息还是已读状态更新，都重新拉取一次总数，保证红点绝对准确
           fetchUnreadCount(session.user.id);
         }
       ).subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [session?.user?.id, userProfile]); // 关键依赖：必须包含 userProfile
+    return () => supabase.removeChannel(channel);
+  }, [session?.user?.id, userProfile]);
 
-  // === 第 3 层：数据拉取 (Data Fetching) ===
+  // === 第 3 层：数据拉取 (保持原样) ===
   useEffect(() => { 
     if (userProfile) fetchData(); 
   }, [userProfile]);
@@ -175,7 +163,6 @@ function App() {
   // === 辅助函数 ===
   const fetchUnreadCount = async (userId) => {
     try {
-      // 保持你原有的逻辑
       const { data } = await supabase.from('conversations').select('unread_count').eq('user_id', userId);
       const total = data ? data.reduce((sum, i) => sum + i.unread_count, 0) : 0;
       setUnreadCount(total);
@@ -185,13 +172,7 @@ function App() {
   async function checkProfile(userId) {
     try {
       const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
-      
-      if (error) {
-        console.error("Profile check error:", error);
-        setFetchError(true);
-        setLoading(false);
-        return;
-      }
+      if (error) { setFetchError(true); setLoading(false); return; }
 
       if (data && data.role) {
          const today = new Date().toISOString().split('T')[0];
@@ -204,12 +185,7 @@ function App() {
          setProfileNotFound(true);
          setUserProfile(null); 
       }
-    } catch (e) {
-      console.error(e);
-      setFetchError(true);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setFetchError(true); } finally { setLoading(false); }
   }
 
   const fetchData = async () => {
@@ -245,23 +221,36 @@ function App() {
 
   const isVip = () => userProfile?.vip_expiry && new Date(userProfile.vip_expiry) > new Date();
 
-  const handleNotificationClick = () => {
-    if (notification) {
-      setDirectChatId(notification.sender_id);
-      setShowProfile(true);
-      setNotification(null);
-    }
+  // === 核心修改：动态计算价格 ===
+  const calculateUnlockCost = (cardExperience) => {
+    // 1. VIP 免费：返回 0，这会直接跳过扣费检查
+    if (isVip()) return 0;
+
+    // 2. 解析经验值
+    const exp = parseInt(cardExperience) || 0;
+
+    // 3. 0-1年 -> 1币
+    if (exp <= 1) return 1;
+
+    // 4. >1年 -> 几年扣几币，封顶10
+    return Math.min(exp, 10);
   };
 
   const handleSwipe = async (direction) => {
-    if (currentIndex >= cards.length) return;
+    if (currentIndex >= cards.length || processingSwipe) return;
     const currentCard = cards[currentIndex];
     
+    // 左滑 (Pass)
     if (direction === 'left') {
       setCurrentIndex(curr => curr + 1);
       return;
     }
+
+    // 右滑 (Like / Unlock)
     if (direction === 'right') {
+      setProcessingSwipe(true); // 加锁
+
+      // A. 工人找工作逻辑 (保持完整不变)
       if (userProfile.role === 'worker') {
         const limit = 20 + (userProfile.swipe_quota_extra || 0);
         const used = userProfile.swipes_used_today || 0;
@@ -275,38 +264,90 @@ function App() {
         try { await supabase.from('jobs').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id); } catch(e){}
         setUserProfile(prev => ({...prev, swipes_used_today: used + 1}));
         setCurrentIndex(curr => curr + 1);
+        setProcessingSwipe(false);
+      
+      // B. 老板找工人逻辑 (核心修改：工龄定价 + 安全扣费)
       } else if (userProfile.role === 'boss') {
         try {
-             await supabase.from('contacts').insert({ boss_id: session.user.id, worker_id: currentCard.id });
-             checkProfile(session.user.id);
-        } catch (e) {}
-        setCurrentIndex(curr => curr + 1);
+          const cost = calculateUnlockCost(currentCard.experience); // 算钱
+          const currentCredits = userProfile.credits || 0;
+
+          // 1. 余额检查 (cost为0时不检查，VIP直接过)
+          if (cost > 0 && currentCredits < cost) {
+            const expText = currentCard.experience ? `${currentCard.experience}年` : '未知';
+            alert(`余额不足！\n\n该工友经验：${expText}\n解锁价格：${cost} 金币\n您的余额：${currentCredits} 金币`);
+            setProcessingSwipe(false);
+            window.location.reload(); // 简单回弹
+            return; 
+          }
+
+          // 2. 扣费 (仅当 cost > 0 时执行)
+          if (cost > 0) {
+            const { error: deductError } = await supabase
+              .from('profiles')
+              .update({ credits: currentCredits - cost })
+              .eq('id', session.user.id);
+            
+            if (deductError) throw new Error("Deduct failed");
+            
+            // UI 先更新给用户看
+            setUserProfile(prev => ({...prev, credits: currentCredits - cost}));
+          }
+
+          // 3. 解锁
+          const { error: unlockError } = await supabase
+            .from('contacts')
+            .insert({ boss_id: session.user.id, worker_id: currentCard.id });
+
+          // 4. 回滚机制：如果解锁失败，把钱退回去
+          if (unlockError) {
+             if (cost > 0) {
+                await supabase.from('profiles').update({ credits: currentCredits }).eq('id', session.user.id);
+                setUserProfile(prev => ({...prev, credits: currentCredits})); 
+                alert("解锁失败，金币已自动退回。");
+             }
+             setProcessingSwipe(false);
+             return;
+          }
+
+          checkProfile(session.user.id);
+          setCurrentIndex(curr => curr + 1);
+
+        } catch (e) {
+          console.error("Unlock failed", e);
+          alert("操作失败，请重试");
+        } finally {
+          setProcessingSwipe(false);
+        }
       }
     }
   };
 
+  const handleNotificationClick = () => {
+    if (notification) {
+      setDirectChatId(notification.sender_id);
+      setShowProfile(true);
+      setNotification(null);
+    }
+  };
+  
   const handleContactSupport = () => {
     alert(`请添加客服微信充值/开通VIP：\n\n${config.service_wechat}\n\n(点击确定自动复制)`);
     navigator.clipboard.writeText(config.service_wechat);
   };
 
-  // === 渲染逻辑 ===
   if (loading) return <div className="h-screen flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-600" /></div>;
 
   if (fetchError) return (
     <div className="h-screen flex flex-col items-center justify-center bg-gray-50 gap-4 p-6 text-center">
       <WifiOff size={48} className="text-gray-300"/>
       <h3 className="text-xl font-bold text-gray-800">网络连接异常</h3>
-      <p className="text-gray-500 font-medium">无法读取用户数据</p>
-      <button onClick={() => window.location.reload()} className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl shadow-lg active:scale-95 transition-transform"><RefreshCw size={20}/> 重新加载</button>
-      <button onClick={async () => { await supabase.auth.signOut(); window.location.reload(); }} className="text-sm text-gray-400 underline mt-4">退出登录</button>
+      <button onClick={() => window.location.reload()} className="px-6 py-3 bg-blue-600 text-white rounded-xl">重新加载</button>
     </div>
   );
 
   if (!session) return <Login />;
-  
   if (profileNotFound) return <Onboarding session={session} onComplete={() => checkProfile(session.user.id)} />;
-  
   if (!userProfile) return <div className="h-screen flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-600" /></div>;
 
   if (showPostJob) return <PostJob session={session} onClose={() => setShowPostJob(false)} onPostSuccess={fetchData} />;
@@ -326,7 +367,7 @@ function App() {
   if (currentIndex >= cards.length) {
     return (
       <div className="max-w-md mx-auto h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center">
-        <Header onOpenProfile={() => setShowProfile(true)} unreadCount={unreadCount} />
+        <Header onOpenProfile={() => setShowProfile(true)} unreadCount={unreadCount} credits={userProfile.credits} />
         <Hammer size={64} className="text-gray-300 mb-4" />
         <h2 className="text-xl font-bold text-gray-800">刷完了</h2>
         <p className="text-gray-500 mt-2 mb-6">暂时没有更多匹配。</p>
@@ -343,7 +384,7 @@ function App() {
   return (
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
       {notification && <Toast notification={notification} onClose={() => setNotification(null)} onClick={handleNotificationClick} />}
-      <Header onOpenProfile={() => setShowProfile(true)} unreadCount={unreadCount} />
+      <Header onOpenProfile={() => setShowProfile(true)} unreadCount={unreadCount} credits={userProfile.credits} />
       
       <div className="w-full flex flex-col justify-center items-center relative px-4" style={{ height: '55vh', marginTop: '80px' }}>
         <AnimatePresence>

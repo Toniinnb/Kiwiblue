@@ -4,7 +4,6 @@ import Login from './Login';
 import Onboarding from './Onboarding';
 import PostJob from './PostJob'; 
 import Profile from './Profile'; 
-// 👇 确保只引入这些稳健的图标
 import { MapPin, Hammer, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown, Megaphone, Bell } from 'lucide-react';
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 import { useConfig } from './ConfigContext';
@@ -84,10 +83,16 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, level, isInterested }) 
   );
 };
 
-// === 顶部通知条 ===
-const Toast = ({ message, onClose, onClick }) => (
-  <div onClick={onClick} className="fixed top-4 left-4 right-4 z-[100] bg-white border-l-4 border-blue-500 shadow-xl rounded-lg p-4 flex items-center justify-between animate-slide-down cursor-pointer">
-    <div className="flex items-center gap-3"><div className="bg-blue-100 p-2 rounded-full text-blue-600"><Bell size={18} /></div><div><p className="font-bold text-gray-800 text-sm">新消息提醒</p><p className="text-gray-500 text-xs">{message}</p></div></div>
+// === 顶部通知条 (接收 object 数据) ===
+const Toast = ({ notification, onClose, onClick }) => (
+  <div onClick={onClick} className="fixed top-4 left-4 right-4 z-[100] bg-white border-l-4 border-blue-500 shadow-xl rounded-lg p-4 flex items-center justify-between animate-slide-down cursor-pointer active:scale-95 transition-transform">
+    <div className="flex items-center gap-3">
+      <div className="bg-blue-100 p-2 rounded-full text-blue-600"><Bell size={18} /></div>
+      <div>
+        <p className="font-bold text-gray-800 text-sm">收到新消息</p>
+        <p className="text-gray-500 text-xs truncate max-w-[200px]">{notification.content}</p>
+      </div>
+    </div>
     <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="text-gray-400 hover:text-gray-600"><X size={16}/></button>
   </div>
 );
@@ -102,15 +107,15 @@ function App() {
   const [cards, setCards] = useState([]); 
   const [loading, setLoading] = useState(true);
   
-  // 消息状态
+  // 消息 & 通知状态
   const [unreadCount, setUnreadCount] = useState(0);
-  const [toastMsg, setToastMsg] = useState(null);
+  const [notification, setNotification] = useState(null); // 存消息对象 {content, sender_id}
+  const [directChatId, setDirectChatId] = useState(null); // 直达指令
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) {
-        // 核心：一进来就检查身份，决定去首页还是去Onboarding
         checkProfile(session.user.id);
         fetchUnreadCount(session.user.id);
       } else {
@@ -128,14 +133,20 @@ function App() {
       }
     });
 
-    // 消息监听
+    // 全局消息监听
     const channel = supabase
       .channel('global_messages')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
         if (session && payload.new.receiver_id === session.user.id) {
+          // 1. 更新总数 (或者等待 fetchUnreadCount 刷新)
           setUnreadCount(prev => prev + 1);
-          setToastMsg(payload.new.content);
-          setTimeout(() => setToastMsg(null), 3000);
+          
+          // 2. 弹窗逻辑：如果当前没有打开个人中心，或者打开了但没在聊这个人
+          // 简单处理：只要来消息就弹窗，由用户决定点不点
+          setNotification({ content: payload.new.content, sender_id: payload.new.sender_id });
+          
+          // 3秒后自动消失
+          setTimeout(() => setNotification(null), 3000);
         }
       })
       .subscribe();
@@ -146,23 +157,16 @@ function App() {
     };
   }, [session]);
 
-  // === 核心逻辑：从数据库拉取计数，不数数了 ===
   const fetchUnreadCount = async (userId) => {
-    // 这里也可以改成读 conversations 表的 unread_count 之和，更准
     const { data } = await supabase.from('conversations').select('unread_count').eq('user_id', userId);
     const total = data ? data.reduce((sum, i) => sum + i.unread_count, 0) : 0;
     setUnreadCount(total);
   };
 
-  // === 核心修复逻辑：身份检查 ===
   async function checkProfile(userId) {
     try {
-      // 1. 强制去数据库查，不依赖本地
       const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
-      
-      // 2. 判断：数据库里有没有？角色有没有填？
       if (data && data.role) {
-         // 老用户：有资料且有角色 -> 进首页
          const today = new Date().toISOString().split('T')[0];
          if (data.last_active_date !== today) {
            await supabase.from('profiles').update({ swipes_used_today: 0, last_active_date: today }).eq('id', userId);
@@ -170,7 +174,6 @@ function App() {
          }
          setUserProfile(data);
       } else {
-         // 新用户：或者资料不全 -> 进 Onboarding
          setUserProfile(null); 
       }
     } catch (e) {
@@ -214,6 +217,15 @@ function App() {
   const handleContactSupport = () => {
     alert(`请添加客服微信充值/开通VIP：\n\n${config.service_wechat}\n\n(点击确定自动复制)`);
     navigator.clipboard.writeText(config.service_wechat);
+  };
+
+  // === 处理通知点击 (直达逻辑) ===
+  const handleNotificationClick = () => {
+    if (notification) {
+      setDirectChatId(notification.sender_id); // 1. 设定目标
+      setShowProfile(true); // 2. 打开个人中心
+      setNotification(null); // 3. 关闭弹窗
+    }
   };
 
   const handleSwipe = async (direction) => {
@@ -273,13 +285,23 @@ function App() {
     return match ? Math.min(Math.max(parseInt(match[0], 10), 1), 10) : 1; 
   };
 
-  // === 路由守卫逻辑 ===
   if (loading) return <div className="h-screen flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-600" /></div>;
   if (!session) return <Login />;
-  // 只有当 userProfile 为 null (即数据库里没查到人) 时，才去 Onboarding
   if (!userProfile) return <Onboarding session={session} onComplete={() => checkProfile(session.user.id)} />;
   if (showPostJob) return <PostJob session={session} onClose={() => setShowPostJob(false)} onPostSuccess={fetchData} />;
-  if (showProfile) return <Profile session={session} userProfile={userProfile} onClose={() => {setShowProfile(false); fetchUnreadCount(session.user.id);}} onLogout={async () => { await supabase.auth.signOut(); window.location.reload(); }} onProfileUpdate={() => checkProfile(session.user.id)} />;
+  
+  // 核心：传递直达指令给 Profile
+  if (showProfile) return (
+    <Profile 
+      session={session} 
+      userProfile={userProfile} 
+      onClose={() => {setShowProfile(false); fetchUnreadCount(session.user.id);}} 
+      onLogout={async () => { await supabase.auth.signOut(); window.location.reload(); }} 
+      onProfileUpdate={() => checkProfile(session.user.id)} 
+      directChatId={directChatId} // 传进去
+      onDirectChatHandled={() => setDirectChatId(null)} // 处理完清空
+    />
+  );
 
   if (currentIndex >= cards.length) {
     return (
@@ -307,7 +329,8 @@ function App() {
 
   return (
     <div className="max-w-md mx-auto h-screen bg-gray-100 relative font-sans overflow-hidden">
-      {toastMsg && <Toast message={toastMsg} onClose={() => setToastMsg(null)} onClick={() => {setToastMsg(null); setShowProfile(true);}} />}
+      {/* 传递完整通知对象给 Toast */}
+      {notification && <Toast notification={notification} onClose={() => setNotification(null)} onClick={handleNotificationClick} />}
       
       <Header onOpenProfile={() => setShowProfile(true)} unreadCount={unreadCount} />
       

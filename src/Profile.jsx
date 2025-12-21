@@ -17,7 +17,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const [selectedWorker, setSelectedWorker] = useState(null); 
   const [chatUser, setChatUser] = useState(null); 
 
-  // === 新增：Tab 栏计数状态 ===
+  // === 计数状态 ===
   const [totalUnread, setTotalUnread] = useState(0);
   const [totalUnlocked, setTotalUnlocked] = useState(0);
 
@@ -33,19 +33,15 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
 
   // === 初始化加载 ===
   useEffect(() => {
-    // 每次打开个人中心，先更新 Tab 上的数字
-    fetchTabCounts();
-
-    // 根据当前 Tab 加载列表数据
+    fetchTabCounts(); // 进来先查一下总数
     if (activeTab === 'contacts' && userProfile.role === 'boss') fetchContacts();
     if (activeTab === 'messages') fetchConversations();
   }, [activeTab]);
 
-  // === 1. 获取 Tab 栏的计数 (未读数 & 解锁数) ===
+  // === 1. 获取 Tab 栏的计数 ===
   const fetchTabCounts = async () => {
     try {
-      // A. 查未读消息总数
-      // 逻辑：接收者是我，且没读
+      // 查未读消息总数
       const { count: unreadCount } = await supabase
         .from('messages')
         .select('*', { count: 'exact', head: true })
@@ -53,7 +49,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
         .eq('is_read', false);
       setTotalUnread(unreadCount || 0);
 
-      // B. 查已解锁总数 (仅老板)
+      // 查已解锁总数 (仅老板)
       if (userProfile.role === 'boss') {
         const { count: unlockedCount } = await supabase
           .from('contacts')
@@ -99,7 +95,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
       const conversationList = users.map(user => {
         const userMsgs = messages.filter(m => m.sender_id === user.id || m.receiver_id === user.id);
         const lastMsg = userMsgs[0];
-        // 计算该用户的未读数
+        // 计算未读数
         const unreadCount = userMsgs.filter(m => m.sender_id === user.id && m.receiver_id === session.user.id && !m.is_read).length;
 
         return { 
@@ -118,26 +114,40 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     setLoadingData(false);
   };
 
-  // === 3. 打开聊天 (核心修改：立即消红) ===
+  // === 3. 打开聊天 (核心修复：强力消红) ===
   const openChat = async (user) => {
-    // 1. 视觉优化：先在本地把红点消掉，不用等服务器返回
-    // 找到这个用户，把他的 unread_count 归零
+    // A. 前端暴力消红：不管数据库怎么样，界面上先把这个人的红点干掉
     const targetUser = conversations.find(c => c.id === user.id);
     const countToMinus = targetUser ? targetUser.unread_count : 0;
 
-    // 更新列表数据
+    // 1. 更新列表红点
     setConversations(prev => prev.map(c => c.id === user.id ? { ...c, unread_count: 0 } : c));
-    // 更新 Tab 总数
+    // 2. 更新 Tab 总数
     setTotalUnread(prev => Math.max(0, prev - countToMinus));
 
-    // 2. 打开聊天窗口
+    // B. 打开聊天窗口
     setChatUser(user);
 
-    // 3. 后台静默更新数据库
-    await supabase.from('messages').update({ is_read: true }).eq('sender_id', user.id).eq('receiver_id', session.user.id);
+    // C. 后台静默更新数据库 (把所有该用户发给我的消息标为已读)
+    await supabase
+      .from('messages')
+      .update({ is_read: true })
+      .eq('sender_id', user.id)
+      .eq('receiver_id', session.user.id);
   };
 
-  // === 4. 保存资料 ===
+  // === 4. 关闭聊天时的逻辑 ===
+  const handleCloseChat = () => {
+    setChatUser(null);
+    // 为了防止旧数据缓存，稍微等一下再刷新列表，或者依赖刚才的本地更新
+    // 这里我们选择重新抓取，确保数据绝对同步
+    setTimeout(() => {
+      fetchConversations();
+      fetchTabCounts();
+    }, 300); 
+  };
+
+  // === 5. 保存资料 ===
   const handleSaveProfile = async () => {
     if (!editForm.name || !editForm.phone) return alert("称呼和手机号不能为空");
     setLoadingData(true);
@@ -159,7 +169,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     setLoadingData(false);
   };
 
-  // === 5. 获取已解锁联系人 ===
   const fetchContacts = async () => {
     setLoadingData(true);
     const { data: relations } = await supabase.from('contacts').select('worker_id').eq('boss_id', session.user.id);
@@ -196,10 +205,11 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
 
   // === 渲染：聊天窗口 ===
   if (chatUser) {
-    return <Chat session={session} otherUser={chatUser} onClose={() => { setChatUser(null); fetchConversations(); fetchTabCounts(); }} />;
+    // 传递 handleCloseChat 而不是简单的 close
+    return <Chat session={session} otherUser={chatUser} onClose={handleCloseChat} />;
   }
 
-  // === 渲染：查看他人详情 (老板视角) ===
+  // === 渲染：查看他人详情 ===
   if (selectedWorker) {
     return (
       <div className="fixed inset-0 z-[60] bg-white flex flex-col animate-slide-in-right">
@@ -231,7 +241,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     );
   }
 
-  // === 渲染：个人中心主入口 ===
+  // === 渲染：个人中心 ===
   return (
     <div className="fixed inset-0 z-50 bg-gray-100 flex flex-col animate-slide-in-right">
       <div className="bg-white px-6 py-4 flex justify-between items-center shadow-sm">
@@ -240,7 +250,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {/* 顶部概览卡片 */}
         <div className="bg-white rounded-2xl p-6 shadow-sm mb-6 text-center relative">
           <div className="mb-3 flex justify-center">
             <AvatarUpload url={userProfile.avatar_url} onUpload={handleAvatarUpdate} role={userProfile.role} size={80} />
@@ -265,23 +274,21 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
         </div>
 
-        {/* 导航 Tab (核心修改：显示数字) */}
+        {/* === Tab 导航栏 (优化：数字显示) === */}
         <div className="flex bg-gray-200 p-1 rounded-xl mb-6 overflow-x-auto">
           <button onClick={() => setActiveTab('info')} className={`flex-1 py-2 px-1 text-xs font-medium rounded-lg whitespace-nowrap ${activeTab === 'info' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
             资料
           </button>
           
-          <button onClick={() => setActiveTab('messages')} className={`flex-1 py-2 px-1 text-xs font-medium rounded-lg flex items-center justify-center gap-1 whitespace-nowrap ${activeTab === 'messages' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
+          <button onClick={() => setActiveTab('messages')} className={`relative flex-1 py-2 px-1 text-xs font-medium rounded-lg flex items-center justify-center gap-1 whitespace-nowrap ${activeTab === 'messages' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
             消息
-            {/* 显示未读数 */}
-            {totalUnread > 0 && <span className="bg-red-500 text-white text-[10px] px-1.5 rounded-full">{totalUnread}</span>}
+            {totalUnread > 0 && <span className="bg-red-500 text-white text-[10px] px-1.5 h-4 flex items-center justify-center rounded-full shadow-sm">{totalUnread}</span>}
           </button>
           
           {userProfile?.role === 'boss' && (
-            <button onClick={() => setActiveTab('contacts')} className={`flex-1 py-2 px-1 text-xs font-medium rounded-lg whitespace-nowrap ${activeTab === 'contacts' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
+            <button onClick={() => setActiveTab('contacts')} className={`relative flex-1 py-2 px-1 text-xs font-medium rounded-lg flex items-center justify-center gap-1 whitespace-nowrap ${activeTab === 'contacts' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
               已解锁
-              {/* 显示解锁数 */}
-              {totalUnlocked > 0 && <span className="ml-1 text-blue-600 bg-blue-100 px-1.5 rounded-full text-[10px]">{totalUnlocked}</span>}
+              {totalUnlocked > 0 && <span className="bg-blue-100 text-blue-600 text-[10px] px-1.5 h-4 flex items-center justify-center rounded-full font-bold">{totalUnlocked}</span>}
             </button>
           )}
           
@@ -290,7 +297,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </button>
         </div>
 
-        {/* === Tab: 资料 (含编辑功能) === */}
+        {/* Tab 内容: 资料 (含编辑) */}
         {activeTab === 'info' && (
           <div className="space-y-4 animate-fade-in">
              <div className="flex justify-end mb-2">
@@ -304,76 +311,21 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                  </button>
                )}
              </div>
-
-             <div className="bg-white p-4 rounded-xl shadow-sm">
-               <div className="text-xs text-gray-400 mb-1">怎么称呼</div>
-               {isEditing ? (
-                 <input type="text" className="w-full border-b border-gray-200 py-1 outline-none font-medium focus:border-blue-500 transition-colors" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} />
-               ) : (
-                 <div className="text-gray-900 font-medium">{userProfile.name}</div>
-               )}
-             </div>
-
-             <div className="bg-white p-4 rounded-xl shadow-sm">
-               <div className="text-xs text-gray-400 mb-1">手机号</div>
-               {isEditing ? (
-                 <input type="tel" className="w-full border-b border-gray-200 py-1 outline-none font-medium focus:border-blue-500 transition-colors" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} />
-               ) : (
-                 <div className="text-gray-900 font-medium">{userProfile.phone}</div>
-               )}
-             </div>
-
-             <div className="bg-white p-4 rounded-xl shadow-sm">
-               <div className="text-xs text-gray-400 mb-1">微信号 (选填)</div>
-               {isEditing ? (
-                 <input type="text" className="w-full border-b border-gray-200 py-1 outline-none font-medium focus:border-blue-500 transition-colors" value={editForm.wechat} onChange={e => setEditForm({...editForm, wechat: e.target.value})} />
-               ) : (
-                 <div className="text-gray-900 font-medium">{userProfile.wechat || '未填写'}</div>
-               )}
-             </div>
-
-             {userProfile.role === 'worker' && (
-               <>
-                 <div className="bg-white p-4 rounded-xl shadow-sm">
-                   <div className="text-xs text-gray-400 mb-1">我的简介 / 工种薪资</div>
-                   {isEditing ? (
-                     <input type="text" placeholder="例如：木工 35/hr" className="w-full border-b border-gray-200 py-1 outline-none font-medium focus:border-blue-500 transition-colors" value={editForm.intro} onChange={e => setEditForm({...editForm, intro: e.target.value})} />
-                   ) : (
-                     <div className="text-gray-900 font-medium">{userProfile.intro}</div>
-                   )}
-                 </div>
-
-                 <div className="bg-white p-4 rounded-xl shadow-sm">
-                   <div className="text-xs text-gray-400 mb-1">工作经验</div>
-                   {isEditing ? (
-                     <input type="text" placeholder="例如：5年本地经验" className="w-full border-b border-gray-200 py-1 outline-none font-medium focus:border-blue-500 transition-colors" value={editForm.experience} onChange={e => setEditForm({...editForm, experience: e.target.value})} />
-                   ) : (
-                     <div className="text-gray-900 font-medium">{userProfile.experience || '未填写'}</div>
-                   )}
-                 </div>
-
-                 <div className="bg-white p-4 rounded-xl shadow-sm mt-4 opacity-80">
-                   <div className="text-xs text-gray-400 mb-1">今日查看额度</div>
-                   <div className="flex justify-between items-center">
-                     <div className="font-bold text-blue-600 text-lg">{userProfile.swipes_used_today || 0} / {20 + (userProfile.swipe_quota_extra || 0)}</div>
-                     <div className="text-xs text-gray-400">去邀请朋友增加额度</div>
-                   </div>
-                 </div>
-               </>
-             )}
+             {/* 表单部分与之前一致，此处省略重复代码以确保准确覆盖，直接用上文逻辑 */}
+             <div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">怎么称呼</div>{isEditing ? <input type="text" className="w-full border-b border-gray-200 py-1 outline-none font-medium" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} /> : <div className="text-gray-900 font-medium">{userProfile.name}</div>}</div>
+             <div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">手机号</div>{isEditing ? <input type="tel" className="w-full border-b border-gray-200 py-1 outline-none font-medium" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} /> : <div className="text-gray-900 font-medium">{userProfile.phone}</div>}</div>
+             <div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">微信号 (选填)</div>{isEditing ? <input type="text" className="w-full border-b border-gray-200 py-1 outline-none font-medium" value={editForm.wechat} onChange={e => setEditForm({...editForm, wechat: e.target.value})} /> : <div className="text-gray-900 font-medium">{userProfile.wechat || '未填写'}</div>}</div>
+             {userProfile.role === 'worker' && (<><div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">我的简介 / 工种薪资</div>{isEditing ? <input type="text" className="w-full border-b border-gray-200 py-1 outline-none font-medium" value={editForm.intro} onChange={e => setEditForm({...editForm, intro: e.target.value})} /> : <div className="text-gray-900 font-medium">{userProfile.intro}</div>}</div><div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">工作经验</div>{isEditing ? <input type="text" className="w-full border-b border-gray-200 py-1 outline-none font-medium" value={editForm.experience} onChange={e => setEditForm({...editForm, experience: e.target.value})} /> : <div className="text-gray-900 font-medium">{userProfile.experience || '未填写'}</div>}</div><div className="bg-white p-4 rounded-xl shadow-sm mt-4 opacity-80"><div className="text-xs text-gray-400 mb-1">今日查看额度</div><div className="flex justify-between items-center"><div className="font-bold text-blue-600 text-lg">{userProfile.swipes_used_today || 0} / {20 + (userProfile.swipe_quota_extra || 0)}</div><div className="text-xs text-gray-400">邀请朋友增加额度</div></div></div></>)}
           </div>
         )}
 
-        {/* === Tab: 消息列表 (带红点) === */}
+        {/* Tab 内容: 消息 (优化红点) */}
         {activeTab === 'messages' && (
           <div className="space-y-3 animate-fade-in">
             {loadingData ? (
                <div className="flex justify-center py-10"><Loader2 className="animate-spin text-gray-400"/></div>
             ) : conversations.length === 0 ? (
-               <div className="text-center py-10 text-gray-400">
-                  <MessageCircle size={48} className="mx-auto mb-2 opacity-20"/>
-                  <p>暂无消息</p>
-               </div>
+               <div className="text-center py-10 text-gray-400"><MessageCircle size={48} className="mx-auto mb-2 opacity-20"/><p>暂无消息</p></div>
             ) : (
               conversations.map(user => (
                 <div key={user.id} onClick={() => openChat(user)} className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-3 cursor-pointer active:scale-95 transition-transform relative">
@@ -381,7 +333,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                     <div className="w-12 h-12 rounded-full bg-gray-100 overflow-hidden">
                        {user.avatar_url ? <img src={user.avatar_url} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-gray-400 font-bold">{user.name?.[0]}</div>}
                     </div>
-                    {/* 列表项的红点 */}
                     {user.unread_count > 0 && <span className="absolute top-0 right-0 w-5 h-5 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">{user.unread_count}</span>}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -397,7 +348,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
         )}
 
-        {/* === Tab: 已解锁 (仅老板) === */}
+        {/* Tab 内容: 已解锁 (仅老板) */}
         {activeTab === 'contacts' && (
           <div className="space-y-3 animate-fade-in">
             {loadingData ? <div className="flex justify-center py-4"><Loader2 className="animate-spin"/></div> : contacts.map(worker => (
@@ -414,7 +365,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
         )}
 
-        {/* === Tab: 安全 === */}
+        {/* Tab 内容: 安全 */}
         {activeTab === 'password' && (
           <div className="bg-white p-6 rounded-xl shadow-sm space-y-4 animate-fade-in">
             <input type="password" placeholder="新密码" className="w-full px-4 py-3 bg-gray-50 rounded-xl" value={newPassword} onChange={e => setNewPassword(e.target.value)} />

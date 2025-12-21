@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
-// 👇 引入了 Edit3 (编辑图标) 和 Save (保存图标)
 import { X, Loader2, ChevronRight, Gift, Copy, Crown, MessageCircle, User, Building2, Edit3, Save } from 'lucide-react';
 import AvatarUpload from './AvatarUpload'; 
 import Chat from './Chat'; 
@@ -18,9 +17,12 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const [selectedWorker, setSelectedWorker] = useState(null); 
   const [chatUser, setChatUser] = useState(null); 
 
-  // === 新增：编辑模式状态 ===
+  // === 新增：Tab 栏计数状态 ===
+  const [totalUnread, setTotalUnread] = useState(0);
+  const [totalUnlocked, setTotalUnlocked] = useState(0);
+
+  // 编辑模式状态
   const [isEditing, setIsEditing] = useState(false);
-  // 表单数据初始化
   const [editForm, setEditForm] = useState({
     name: userProfile.name || '',
     phone: userProfile.phone || '',
@@ -29,48 +31,42 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     experience: userProfile.experience || ''
   });
 
-  // 初始化加载
+  // === 初始化加载 ===
   useEffect(() => {
+    // 每次打开个人中心，先更新 Tab 上的数字
+    fetchTabCounts();
+
+    // 根据当前 Tab 加载列表数据
     if (activeTab === 'contacts' && userProfile.role === 'boss') fetchContacts();
     if (activeTab === 'messages') fetchConversations();
   }, [activeTab]);
 
-  // === 1. 保存资料逻辑 (新增) ===
-  const handleSaveProfile = async () => {
-    if (!editForm.name || !editForm.phone) return alert("称呼和手机号不能为空");
+  // === 1. 获取 Tab 栏的计数 (未读数 & 解锁数) ===
+  const fetchTabCounts = async () => {
+    try {
+      // A. 查未读消息总数
+      // 逻辑：接收者是我，且没读
+      const { count: unreadCount } = await supabase
+        .from('messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('receiver_id', session.user.id)
+        .eq('is_read', false);
+      setTotalUnread(unreadCount || 0);
 
-    setLoadingData(true);
-    const { error } = await supabase.from('profiles').update({
-      name: editForm.name,
-      phone: editForm.phone,
-      wechat: editForm.wechat,
-      intro: editForm.intro,
-      experience: editForm.experience,
-    }).eq('id', session.user.id);
-
-    if (error) {
-      alert("保存失败: " + error.message);
-    } else {
-      await onProfileUpdate(); // 通知父组件刷新数据
-      setIsEditing(false);     // 退出编辑模式
-      alert("资料已更新！");
+      // B. 查已解锁总数 (仅老板)
+      if (userProfile.role === 'boss') {
+        const { count: unlockedCount } = await supabase
+          .from('contacts')
+          .select('*', { count: 'exact', head: true })
+          .eq('boss_id', session.user.id);
+        setTotalUnlocked(unlockedCount || 0);
+      }
+    } catch (e) {
+      console.error("获取计数失败", e);
     }
-    setLoadingData(false);
   };
 
-  // === 2. 获取已解锁联系人 ===
-  const fetchContacts = async () => {
-    setLoadingData(true);
-    const { data: relations } = await supabase.from('contacts').select('worker_id').eq('boss_id', session.user.id);
-    if (relations && relations.length > 0) {
-      const workerIds = relations.map(r => r.worker_id);
-      const { data: workers } = await supabase.from('profiles').select('*').in('id', workerIds);
-      setContacts(workers || []);
-    } else setContacts([]);
-    setLoadingData(false);
-  };
-
-  // === 3. 获取消息列表 (带未读红点) ===
+  // === 2. 获取消息列表 ===
   const fetchConversations = async () => {
     setLoadingData(true);
     try {
@@ -103,7 +99,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
       const conversationList = users.map(user => {
         const userMsgs = messages.filter(m => m.sender_id === user.id || m.receiver_id === user.id);
         const lastMsg = userMsgs[0];
-        // 计算未读数：发送者是对方，接收者是我，且未读
+        // 计算该用户的未读数
         const unreadCount = userMsgs.filter(m => m.sender_id === user.id && m.receiver_id === session.user.id && !m.is_read).length;
 
         return { 
@@ -122,11 +118,57 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     setLoadingData(false);
   };
 
-  // === 4. 打开聊天并标记已读 ===
+  // === 3. 打开聊天 (核心修改：立即消红) ===
   const openChat = async (user) => {
+    // 1. 视觉优化：先在本地把红点消掉，不用等服务器返回
+    // 找到这个用户，把他的 unread_count 归零
+    const targetUser = conversations.find(c => c.id === user.id);
+    const countToMinus = targetUser ? targetUser.unread_count : 0;
+
+    // 更新列表数据
+    setConversations(prev => prev.map(c => c.id === user.id ? { ...c, unread_count: 0 } : c));
+    // 更新 Tab 总数
+    setTotalUnread(prev => Math.max(0, prev - countToMinus));
+
+    // 2. 打开聊天窗口
     setChatUser(user);
-    // 立即把对方发给我的消息标为已读
+
+    // 3. 后台静默更新数据库
     await supabase.from('messages').update({ is_read: true }).eq('sender_id', user.id).eq('receiver_id', session.user.id);
+  };
+
+  // === 4. 保存资料 ===
+  const handleSaveProfile = async () => {
+    if (!editForm.name || !editForm.phone) return alert("称呼和手机号不能为空");
+    setLoadingData(true);
+    const { error } = await supabase.from('profiles').update({
+      name: editForm.name,
+      phone: editForm.phone,
+      wechat: editForm.wechat,
+      intro: editForm.intro,
+      experience: editForm.experience,
+    }).eq('id', session.user.id);
+
+    if (error) {
+      alert("保存失败: " + error.message);
+    } else {
+      await onProfileUpdate(); 
+      setIsEditing(false);     
+      alert("资料已更新！");
+    }
+    setLoadingData(false);
+  };
+
+  // === 5. 获取已解锁联系人 ===
+  const fetchContacts = async () => {
+    setLoadingData(true);
+    const { data: relations } = await supabase.from('contacts').select('worker_id').eq('boss_id', session.user.id);
+    if (relations && relations.length > 0) {
+      const workerIds = relations.map(r => r.worker_id);
+      const { data: workers } = await supabase.from('profiles').select('*').in('id', workerIds);
+      setContacts(workers || []);
+    } else setContacts([]);
+    setLoadingData(false);
   };
 
   const handleAvatarUpdate = async (newUrl) => {
@@ -154,7 +196,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
 
   // === 渲染：聊天窗口 ===
   if (chatUser) {
-    return <Chat session={session} otherUser={chatUser} onClose={() => { setChatUser(null); fetchConversations(); }} />;
+    return <Chat session={session} otherUser={chatUser} onClose={() => { setChatUser(null); fetchConversations(); fetchTabCounts(); }} />;
   }
 
   // === 渲染：查看他人详情 (老板视角) ===
@@ -223,18 +265,34 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
         </div>
 
-        {/* 导航 Tab */}
-        <div className="flex bg-gray-200 p-1 rounded-xl mb-6">
-          <button onClick={() => setActiveTab('info')} className={`flex-1 py-2 text-xs font-medium rounded-lg ${activeTab === 'info' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>资料</button>
-          <button onClick={() => setActiveTab('messages')} className={`flex-1 py-2 text-xs font-medium rounded-lg flex items-center justify-center gap-1 ${activeTab === 'messages' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>消息</button>
-          {userProfile?.role === 'boss' && <button onClick={() => setActiveTab('contacts')} className={`flex-1 py-2 text-xs font-medium rounded-lg ${activeTab === 'contacts' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>已解锁</button>}
-          <button onClick={() => setActiveTab('password')} className={`flex-1 py-2 text-xs font-medium rounded-lg ${activeTab === 'password' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>安全</button>
+        {/* 导航 Tab (核心修改：显示数字) */}
+        <div className="flex bg-gray-200 p-1 rounded-xl mb-6 overflow-x-auto">
+          <button onClick={() => setActiveTab('info')} className={`flex-1 py-2 px-1 text-xs font-medium rounded-lg whitespace-nowrap ${activeTab === 'info' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
+            资料
+          </button>
+          
+          <button onClick={() => setActiveTab('messages')} className={`flex-1 py-2 px-1 text-xs font-medium rounded-lg flex items-center justify-center gap-1 whitespace-nowrap ${activeTab === 'messages' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
+            消息
+            {/* 显示未读数 */}
+            {totalUnread > 0 && <span className="bg-red-500 text-white text-[10px] px-1.5 rounded-full">{totalUnread}</span>}
+          </button>
+          
+          {userProfile?.role === 'boss' && (
+            <button onClick={() => setActiveTab('contacts')} className={`flex-1 py-2 px-1 text-xs font-medium rounded-lg whitespace-nowrap ${activeTab === 'contacts' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
+              已解锁
+              {/* 显示解锁数 */}
+              {totalUnlocked > 0 && <span className="ml-1 text-blue-600 bg-blue-100 px-1.5 rounded-full text-[10px]">{totalUnlocked}</span>}
+            </button>
+          )}
+          
+          <button onClick={() => setActiveTab('password')} className={`flex-1 py-2 px-1 text-xs font-medium rounded-lg whitespace-nowrap ${activeTab === 'password' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
+            安全
+          </button>
         </div>
 
         {/* === Tab: 资料 (含编辑功能) === */}
         {activeTab === 'info' && (
           <div className="space-y-4 animate-fade-in">
-             {/* 编辑切换按钮 */}
              <div className="flex justify-end mb-2">
                {isEditing ? (
                  <button onClick={handleSaveProfile} className="flex items-center gap-1 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md hover:bg-green-700 transition-all">
@@ -274,7 +332,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                )}
              </div>
 
-             {/* 工友专属字段 */}
              {userProfile.role === 'worker' && (
                <>
                  <div className="bg-white p-4 rounded-xl shadow-sm">
@@ -295,7 +352,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                    )}
                  </div>
 
-                 {/* 额度 */}
                  <div className="bg-white p-4 rounded-xl shadow-sm mt-4 opacity-80">
                    <div className="text-xs text-gray-400 mb-1">今日查看额度</div>
                    <div className="flex justify-between items-center">
@@ -325,7 +381,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
                     <div className="w-12 h-12 rounded-full bg-gray-100 overflow-hidden">
                        {user.avatar_url ? <img src={user.avatar_url} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-gray-400 font-bold">{user.name?.[0]}</div>}
                     </div>
-                    {/* 列表红点 */}
+                    {/* 列表项的红点 */}
                     {user.unread_count > 0 && <span className="absolute top-0 right-0 w-5 h-5 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">{user.unread_count}</span>}
                   </div>
                   <div className="flex-1 min-w-0">

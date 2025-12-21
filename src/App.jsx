@@ -4,11 +4,11 @@ import Login from './Login';
 import Onboarding from './Onboarding';
 import PostJob from './PostJob'; 
 import Profile from './Profile'; 
-import { MapPin, Hammer, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown, Megaphone, Bell, RefreshCw } from 'lucide-react';
+import { MapPin, Hammer, X, Heart, User, Building2, ShieldCheck, DollarSign, Loader2, Plus, Lock, Flame, Crown, Megaphone, Bell, RefreshCw, WifiOff } from 'lucide-react';
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 import { useConfig } from './ConfigContext';
 
-// === Header 组件 ===
+// === Header ===
 const Header = ({ onOpenProfile, unreadCount }) => {
   const config = useConfig();
   return (
@@ -27,7 +27,7 @@ const Header = ({ onOpenProfile, unreadCount }) => {
   );
 }
 
-// === 卡片组件 ===
+// === DraggableCard ===
 const DraggableCard = ({ data, userRole, isVip, onSwipe, level, isInterested }) => {
   const config = useConfig();
   const x = useMotionValue(0);
@@ -80,6 +80,7 @@ const DraggableCard = ({ data, userRole, isVip, onSwipe, level, isInterested }) 
   );
 };
 
+// === Toast ===
 const Toast = ({ notification, onClose, onClick }) => (
   <div onClick={onClick} className="fixed top-4 left-4 right-4 z-[100] bg-white border-l-4 border-blue-500 shadow-xl rounded-lg p-4 flex items-center justify-between animate-slide-down cursor-pointer active:scale-95 transition-transform">
     <div className="flex items-center gap-3"><div className="bg-blue-100 p-2 rounded-full text-blue-600"><Bell size={18} /></div><div><p className="font-bold text-gray-800 text-sm">收到新消息</p><p className="text-gray-500 text-xs truncate max-w-[200px]">{notification.content}</p></div></div>
@@ -102,8 +103,10 @@ function App() {
   const [notification, setNotification] = useState(null);
   const [directChatId, setDirectChatId] = useState(null); 
 
-  // 错误重试状态
+  // 错误重试状态 (解决死循环的关键)
   const [fetchError, setFetchError] = useState(false);
+  // 新增：区分是“真没资料”还是“读资料报错”
+  const [profileNotFound, setProfileNotFound] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -119,7 +122,6 @@ function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
-        // 注意：这里去掉了 setLoading(true)，防止页面闪烁
         checkProfile(session.user.id);
         fetchUnreadCount(session.user.id);
       }
@@ -145,32 +147,35 @@ function App() {
       const { data } = await supabase.from('conversations').select('unread_count').eq('user_id', userId);
       const total = data ? data.reduce((sum, i) => sum + i.unread_count, 0) : 0;
       setUnreadCount(total);
-    } catch (e) {
-      console.log('Unread count fetch skipped', e);
-    }
+    } catch (e) {}
   };
 
+  // === 核心逻辑加固：防止死循环 ===
   async function checkProfile(userId) {
     setFetchError(false);
+    setProfileNotFound(false);
     try {
       const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
       
       if (error) {
         console.error("Profile check error:", error);
+        // 如果是报错，说明数据库不通或者权限问题，千万别跳转 Onboarding！
         setFetchError(true);
-        // 不在这里 setLoading(false)，让它显示错误页
+        setLoading(false);
         return;
       }
 
       if (data && data.role) {
+         // 正常老用户
          const today = new Date().toISOString().split('T')[0];
-         // 优化：只有日期不一样才更新，减少请求
          if (data.last_active_date !== today) {
            await supabase.from('profiles').update({ swipes_used_today: 0, last_active_date: today }).eq('id', userId);
            data.swipes_used_today = 0;
          }
          setUserProfile(data);
       } else {
+         // 明确查到结果是空，或者没有role，这才是新用户
+         setProfileNotFound(true);
          setUserProfile(null); 
       }
     } catch (e) {
@@ -189,15 +194,16 @@ function App() {
         const { data, error } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
         if (!error && data) newData = data;
       } else {
+        // ... (保持原有的 fetch 逻辑)
+        // 省略中间代码以节省篇幅，核心逻辑不变，主要是上面的 checkProfile 修复
         const { data: unlocked } = await supabase.from('contacts').select('worker_id').eq('boss_id', session.user.id);
         const unlockedIds = unlocked ? unlocked.map(u => u.worker_id) : [];
         
-        // 关键修复：防止 applications RLS 报错阻断流程
         let interestedIds = [];
         try {
           const { data: applicants } = await supabase.from('applications').select('worker_id').eq('boss_id', session.user.id);
           interestedIds = applicants ? applicants.map(a => a.worker_id) : [];
-        } catch (e) { console.log('Apps fetch skipped'); }
+        } catch (e) {}
 
         let query = supabase.from('profiles').select('*').eq('role', 'worker').neq('status', 'busy').order('updated_at', { ascending: false });
         if (unlockedIds.length > 0) query = query.not('id', 'in', `(${unlockedIds.join(',')})`);
@@ -210,12 +216,9 @@ function App() {
            newData = [...interested, ...others];
         }
       }
-      // 只有当卡片真的为空，或者需要重置时才更新
-      // 这里简单处理：直接设置
       setCards(newData);
     } catch (error) { 
       console.error("Card fetch error:", error); 
-      // 即使卡片拉取失败，也不要让整个APP崩溃，只是没卡片而已
     }
   };
 
@@ -232,15 +235,15 @@ function App() {
   };
 
   const handleSwipe = async (direction) => {
-    if (currentIndex >= cards.length) return; // 防越界
+    if (currentIndex >= cards.length) return;
     const currentCard = cards[currentIndex];
-    
     if (direction === 'left') {
       setCurrentIndex(curr => curr + 1);
       return;
     }
     if (direction === 'right') {
-      if (userProfile.role === 'worker') {
+      // (保持原有逻辑，此处省略重复代码)
+       if (userProfile.role === 'worker') {
         const limit = 20 + (userProfile.swipe_quota_extra || 0);
         const used = userProfile.swipes_used_today || 0;
         if (used >= limit) {
@@ -249,26 +252,15 @@ function App() {
           return;
         }
         await supabase.from('profiles').update({ swipes_used_today: used + 1 }).eq('id', session.user.id);
-        // 容错处理：如果不允许发意向，也不要崩
-        try {
-          if (currentCard.boss_id) await supabase.from('applications').insert({ worker_id: session.user.id, job_id: currentCard.id, boss_id: currentCard.boss_id });
-        } catch(e) {}
-        
-        try {
-           await supabase.from('jobs').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id);
-        } catch(e) {}
-
+        try { if (currentCard.boss_id) await supabase.from('applications').insert({ worker_id: session.user.id, job_id: currentCard.id, boss_id: currentCard.boss_id }); } catch(e){}
+        try { await supabase.from('jobs').update({ popularity: (currentCard.popularity || 0) + 1 }).eq('id', currentCard.id); } catch(e){}
         setUserProfile(prev => ({...prev, swipes_used_today: used + 1}));
         setCurrentIndex(curr => curr + 1);
       } else if (userProfile.role === 'boss') {
-        // ... (保持老板逻辑) ...
-        // 为了代码简洁，假设逻辑与之前一致，只增加 try/catch 保护
         try {
              await supabase.from('contacts').insert({ boss_id: session.user.id, worker_id: currentCard.id });
              checkProfile(session.user.id);
-        } catch (e) {
-             console.error(e); // 可能是重复插入，忽略
-        }
+        } catch (e) {}
         setCurrentIndex(curr => curr + 1);
       }
     }
@@ -279,14 +271,15 @@ function App() {
     navigator.clipboard.writeText(config.service_wechat);
   };
 
-  // === 渲染逻辑 ===
   if (loading) return <div className="h-screen flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-600" /></div>;
 
-  // 错误重试界面 (防止死循环)
+  // === 死循环阻断器 ===
+  // 只有当明确是报错时，才显示这里，而不是跳转 Onboarding
   if (fetchError) return (
-    <div className="h-screen flex flex-col items-center justify-center bg-gray-50 gap-4">
-      <Hammer size={48} className="text-gray-300"/>
-      <p className="text-gray-500 font-medium">网络连接出现问题</p>
+    <div className="h-screen flex flex-col items-center justify-center bg-gray-50 gap-4 p-6 text-center">
+      <WifiOff size={48} className="text-gray-300"/>
+      <h3 className="text-xl font-bold text-gray-800">网络连接异常</h3>
+      <p className="text-gray-500 font-medium">无法读取用户数据，请检查网络或重试</p>
       <button onClick={() => window.location.reload()} className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl shadow-lg active:scale-95 transition-transform"><RefreshCw size={20}/> 重新加载</button>
       <button onClick={async () => { await supabase.auth.signOut(); window.location.reload(); }} className="text-sm text-gray-400 underline mt-4">退出登录</button>
     </div>
@@ -294,21 +287,14 @@ function App() {
 
   if (!session) return <Login />;
   
-  if (!userProfile) return <Onboarding session={session} onComplete={() => checkProfile(session.user.id)} />;
+  // 只有当明确查到数据不存在 (profileNotFound=true) 时，才去 Onboarding
+  if (profileNotFound) return <Onboarding session={session} onComplete={() => checkProfile(session.user.id)} />;
+  // 如果还在判断中，保持 loading (兜底)
+  if (!userProfile) return <div className="h-screen flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-600" /></div>;
 
   if (showPostJob) return <PostJob session={session} onClose={() => setShowPostJob(false)} onPostSuccess={fetchData} />;
   
-  if (showProfile) return (
-    <Profile 
-      session={session} 
-      userProfile={userProfile} 
-      onClose={() => {setShowProfile(false); fetchUnreadCount(session.user.id);}} 
-      onLogout={async () => { await supabase.auth.signOut(); window.location.reload(); }} 
-      onProfileUpdate={() => checkProfile(session.user.id)} 
-      directChatId={directChatId} 
-      onDirectChatHandled={() => setDirectChatId(null)} 
-    />
-  );
+  if (showProfile) return <Profile session={session} userProfile={userProfile} onClose={() => {setShowProfile(false); fetchUnreadCount(session.user.id);}} onLogout={async () => { await supabase.auth.signOut(); window.location.reload(); }} onProfileUpdate={() => checkProfile(session.user.id)} directChatId={directChatId} onDirectChatHandled={() => setDirectChatId(null)} />;
 
   if (currentIndex >= cards.length) {
     return (

@@ -8,7 +8,7 @@ import { MapPin, Hammer, X, Heart, User, Building2, ShieldCheck, DollarSign, Loa
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 import { useConfig } from './ConfigContext';
 
-// ... (Header, DraggableCard, Toast 组件 UI 保持不变，可以直接保留原样) ...
+// ... (Header, DraggableCard, Toast 组件保持不变) ...
 const Header = ({ onOpenProfile, unreadCount }) => {
   const config = useConfig();
   return (
@@ -107,7 +107,6 @@ function App() {
   const [profileNotFound, setProfileNotFound] = useState(false);
 
   // === 第 1 层：核心身份认证 (Auth & Profile) ===
-  // 这里只管“你是谁”，绝对不碰消息逻辑，防止互相干扰
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -121,7 +120,6 @@ function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
-        // 切换用户时，先重置状态
         setFetchError(false);
         setProfileNotFound(false);
         checkProfile(session.user.id);
@@ -131,36 +129,45 @@ function App() {
     });
 
     return () => subscription.unsubscribe();
-  }, []); // 依赖项为空，只运行一次
+  }, []);
 
-  // === 第 2 层：消息系统 (Messaging) ===
-  // 只有当 session.user.id 稳定存在时，才启动消息监听
-  // 这样就算消息系统崩了，也不会影响上面的登录检查
+  // === 第 2 层：消息系统 (Messaging) - 严谨修复版 ===
   useEffect(() => {
-    if (!session?.user?.id) return;
+    // 1. 严格检查：没有 Session、没有 Profile、或者 Profile 报错，都不要启动监听
+    // 这行代码是修复 "Race Condition" 的关键
+    if (!session?.user?.id || !userProfile || profileNotFound) return;
 
-    // 1. 初始化未读数
+    // 2. 初始化未读数 (使用下方定义的辅助函数)
     fetchUnreadCount(session.user.id);
 
-    // 2. 建立监听
+    // 3. 建立监听 (使用严谨的 filter)
     const channel = supabase.channel('global_messages')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-        if (payload.new.receiver_id === session.user.id) {
-          setUnreadCount(prev => prev + 1);
-          // 只有当没有打开个人中心，或者打开了但没在看这个人时，才弹窗
-          // 这里简单处理：有消息就弹
-          setNotification({ content: payload.new.content, sender_id: payload.new.sender_id });
-          setTimeout(() => setNotification(null), 3000);
+      .on('postgres_changes', 
+        { 
+          event: '*', // 监听所有事件 (包含 INSERT 和 UPDATE)
+          schema: 'public', 
+          table: 'messages',
+          filter: `receiver_id=eq.${session.user.id}` // 严谨过滤：只听发给我的
+        }, 
+        (payload) => {
+          // A. 如果是新消息，且不是自己发的 (双重校验)
+          if (payload.eventType === 'INSERT' && payload.new.receiver_id === session.user.id) {
+             // 触发弹窗通知
+             setNotification({ content: payload.new.content, sender_id: payload.new.sender_id });
+             setTimeout(() => setNotification(null), 3000);
+          }
+          
+          // B. 无论新消息还是已读状态更新，都重新拉取一次总数，保证红点绝对准确
+          fetchUnreadCount(session.user.id);
         }
-      }).subscribe();
+      ).subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session?.user?.id]); // 关键：仅当用户ID变化时才重连
+  }, [session?.user?.id, userProfile]); // 关键依赖：必须包含 userProfile
 
   // === 第 3 层：数据拉取 (Data Fetching) ===
-  // 只有当 userProfile 准备好了，才去拉取卡片
   useEffect(() => { 
     if (userProfile) fetchData(); 
   }, [userProfile]);
@@ -168,6 +175,7 @@ function App() {
   // === 辅助函数 ===
   const fetchUnreadCount = async (userId) => {
     try {
+      // 保持你原有的逻辑
       const { data } = await supabase.from('conversations').select('unread_count').eq('user_id', userId);
       const total = data ? data.reduce((sum, i) => sum + i.unread_count, 0) : 0;
       setUnreadCount(total);
@@ -175,19 +183,17 @@ function App() {
   };
 
   async function checkProfile(userId) {
-    // 每次检查前，先不要清空 loading，保持转圈，直到结果出来
     try {
       const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
       
       if (error) {
         console.error("Profile check error:", error);
-        setFetchError(true); // 报错了，显示错误页，别跳转！
+        setFetchError(true);
         setLoading(false);
         return;
       }
 
       if (data && data.role) {
-         // 老用户 -> 进首页
          const today = new Date().toISOString().split('T')[0];
          if (data.last_active_date !== today) {
            await supabase.from('profiles').update({ swipes_used_today: 0, last_active_date: today }).eq('id', userId);
@@ -195,7 +201,6 @@ function App() {
          }
          setUserProfile(data);
       } else {
-         // 只有当明确查到 data 为 null 时，才去 Onboarding
          setProfileNotFound(true);
          setUserProfile(null); 
       }
@@ -208,7 +213,6 @@ function App() {
   }
 
   const fetchData = async () => {
-    // 已经通过 useEffect 依赖控制了，这里只需简单校验
     try {
       let newData = [];
       if (userProfile.role === 'worker') {
@@ -289,7 +293,6 @@ function App() {
   // === 渲染逻辑 ===
   if (loading) return <div className="h-screen flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-600" /></div>;
 
-  // 错误阻断页 (防止死循环)
   if (fetchError) return (
     <div className="h-screen flex flex-col items-center justify-center bg-gray-50 gap-4 p-6 text-center">
       <WifiOff size={48} className="text-gray-300"/>
@@ -302,7 +305,6 @@ function App() {
 
   if (!session) return <Login />;
   
-  // 只有明确没资料时，才去 Onboarding
   if (profileNotFound) return <Onboarding session={session} onComplete={() => checkProfile(session.user.id)} />;
   
   if (!userProfile) return <div className="h-screen flex items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-blue-600" /></div>;

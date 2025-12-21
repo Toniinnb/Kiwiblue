@@ -5,7 +5,8 @@ import AvatarUpload from './AvatarUpload';
 import Chat from './Chat'; 
 import { useConfig } from './ConfigContext';
 
-export default function Profile({ session, userProfile, onClose, onLogout, onProfileUpdate }) {
+// 接收新的 props: directChatId, onDirectChatHandled
+export default function Profile({ session, userProfile, onClose, onLogout, onProfileUpdate, directChatId, onDirectChatHandled }) {
   const config = useConfig();
   const [activeTab, setActiveTab] = useState('info'); 
   const [newPassword, setNewPassword] = useState('');
@@ -17,11 +18,9 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const [selectedWorker, setSelectedWorker] = useState(null); 
   const [chatUser, setChatUser] = useState(null); 
 
-  // 计数状态
   const [totalUnread, setTotalUnread] = useState(0);
   const [totalUnlocked, setTotalUnlocked] = useState(0);
 
-  // 编辑模式状态
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     name: userProfile.name || '',
@@ -31,17 +30,44 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     experience: userProfile.experience || ''
   });
 
-  // 初始化
   useEffect(() => {
     fetchTabCounts(); 
     if (activeTab === 'contacts' && userProfile.role === 'boss') fetchContacts();
     if (activeTab === 'messages') fetchConversations();
   }, [activeTab]);
 
-  // === 1. 获取 Tab 栏计数 (从会话表读) ===
+  // === 核心逻辑：监听直达指令 ===
+  useEffect(() => {
+    if (directChatId) {
+      handleDirectJump(directChatId);
+    }
+  }, [directChatId]);
+
+  const handleDirectJump = async (targetUserId) => {
+    // 1. 先尝试在已有的会话列表里找
+    let targetUser = conversations.find(c => c.id === targetUserId);
+
+    // 2. 如果没找到（可能还没加载列表），去数据库现查
+    if (!targetUser) {
+      const { data } = await supabase.from('profiles').select('*').eq('id', targetUserId).maybeSingle();
+      if (data) {
+        targetUser = data;
+      }
+    }
+
+    // 3. 如果找到了，打开聊天
+    if (targetUser) {
+      openChat(targetUser);
+    }
+
+    // 4. 告诉父组件：指令已执行，别再发了
+    if (onDirectChatHandled) {
+      onDirectChatHandled();
+    }
+  };
+
   const fetchTabCounts = async () => {
     try {
-      // 直接查 conversations 表的未读总和
       const { data } = await supabase.from('conversations').select('unread_count').eq('user_id', session.user.id);
       const unreadSum = data ? data.reduce((sum, item) => sum + item.unread_count, 0) : 0;
       setTotalUnread(unreadSum);
@@ -53,11 +79,9 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     } catch (e) { console.error(e); }
   };
 
-  // === 2. 获取消息列表 (从会话表读) ===
   const fetchConversations = async () => {
     setLoadingData(true);
     try {
-      // 联表查询：查会话表 + 对方资料
       const { data, error } = await supabase
         .from('conversations')
         .select(`*, contact:contact_id ( id, name, avatar_url, role, last_active_date )`)
@@ -71,7 +95,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
         name: item.contact.name,
         avatar_url: item.contact.avatar_url,
         role: item.contact.role,
-        last_active_date: item.contact.last_active_date, // 用于判断在线状态
+        last_active_date: item.contact.last_active_date,
         last_msg: item.last_message,
         last_time: item.last_time,
         unread_count: item.unread_count
@@ -82,27 +106,20 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     setLoadingData(false);
   };
 
-  // === 3. 打开聊天 (核心消红逻辑) ===
   const openChat = async (user) => {
-    // A. 前端视觉立即消红
     setConversations(prev => prev.map(c => c.id === user.id ? { ...c, unread_count: 0 } : c));
     const target = conversations.find(c => c.id === user.id);
     if (target) setTotalUnread(prev => Math.max(0, prev - target.unread_count));
 
-    // B. 打开窗口
     setChatUser(user);
-
-    // C. 数据库清零 (Fire and Forget)
     await supabase.from('conversations').update({ unread_count: 0 }).eq('user_id', session.user.id).eq('contact_id', user.id);
   };
 
-  // === 4. 关闭聊天 ===
   const handleCloseChat = () => {
     setChatUser(null);
-    fetchConversations(); // 刷新列表以获取最新消息内容
+    fetchConversations(); 
   };
 
-  // === 保存资料 ===
   const handleSaveProfile = async () => {
     if (!editForm.name || !editForm.phone) return alert("称呼和手机号不能为空");
     setLoadingData(true);

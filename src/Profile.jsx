@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
-import { X, Loader2, ChevronRight, Gift, Copy, Crown, MessageCircle, User, Building2 } from 'lucide-react';
+import { X, Loader2, ChevronRight, Gift, Copy, Crown, MessageCircle, User, Building2, Edit3, Save } from 'lucide-react';
 import AvatarUpload from './AvatarUpload'; 
 import Chat from './Chat'; 
 import { useConfig } from './ConfigContext';
@@ -21,6 +21,46 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     if (activeTab === 'messages') fetchConversations();
   }, [activeTab]);
 
+// ... 放在 const [chatUser, setChatUser] = ... 这一行下面
+
+  // 1. 编辑模式开关
+  const [isEditing, setIsEditing] = useState(false);
+  
+  // 2. 表单数据 (默认填入当前资料)
+  const [editForm, setEditForm] = useState({
+    name: userProfile.name || '',
+    phone: userProfile.phone || '',
+    wechat: userProfile.wechat || '',
+    intro: userProfile.intro || '', // 工种
+    experience: userProfile.experience || '', // 经验
+    wage: userProfile.wage || '' // 薪资 (如果数据库有这个字段)
+  });
+
+  // 3. 保存函数
+  const handleSaveProfile = async () => {
+    // 简单校验
+    if (!editForm.name || !editForm.phone) return alert("称呼和手机号不能为空");
+
+    setLoadingData(true);
+    const { error } = await supabase.from('profiles').update({
+      name: editForm.name,
+      phone: editForm.phone,
+      wechat: editForm.wechat,
+      intro: editForm.intro,
+      experience: editForm.experience,
+      // 如果您的数据库还没 wage 字段，可以不更新这一行，或者把 intro 当作工种+薪资
+    }).eq('id', session.user.id);
+
+    if (error) {
+      alert("保存失败: " + error.message);
+    } else {
+      await onProfileUpdate(); // 刷新父组件数据
+      setIsEditing(false); // 退出编辑模式
+      alert("资料修改成功！");
+    }
+    setLoadingData(false);
+  };
+  
   const fetchContacts = async () => {
     setLoadingData(true);
     const { data: relations } = await supabase.from('contacts').select('worker_id').eq('boss_id', session.user.id);
@@ -187,13 +227,84 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
 
         {activeTab === 'info' && (
           <div className="space-y-4 animate-fade-in">
-             <div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">手机号</div><div className="text-gray-900 font-medium">{userProfile?.phone}</div></div>
+             {/* === 顶部：编辑/保存按钮 === */}
+             <div className="flex justify-end mb-2">
+               {isEditing ? (
+                 <button onClick={handleSaveProfile} className="flex items-center gap-1 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md hover:bg-green-700 transition-all">
+                   <Save size={16} /> 保存资料
+                 </button>
+               ) : (
+                 <button onClick={() => setIsEditing(true)} className="flex items-center gap-1 bg-white text-blue-600 border border-blue-100 px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:bg-blue-50 transition-all">
+                   <Edit3 size={16} /> 修改资料
+                 </button>
+               )}
+             </div>
+
+             {/* === 称呼 === */}
+             <div className="bg-white p-4 rounded-xl shadow-sm">
+               <div className="text-xs text-gray-400 mb-1">怎么称呼</div>
+               {isEditing ? (
+                 <input type="text" className="w-full border-b border-gray-200 py-1 outline-none font-medium focus:border-blue-500 transition-colors" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} />
+               ) : (
+                 <div className="text-gray-900 font-medium">{userProfile.name}</div>
+               )}
+             </div>
+
+             {/* === 手机号 === */}
+             <div className="bg-white p-4 rounded-xl shadow-sm">
+               <div className="text-xs text-gray-400 mb-1">手机号</div>
+               {isEditing ? (
+                 <input type="tel" className="w-full border-b border-gray-200 py-1 outline-none font-medium focus:border-blue-500 transition-colors" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} />
+               ) : (
+                 <div className="text-gray-900 font-medium">{userProfile.phone}</div>
+               )}
+             </div>
+
+             {/* === 微信号 === */}
+             <div className="bg-white p-4 rounded-xl shadow-sm">
+               <div className="text-xs text-gray-400 mb-1">微信号 (选填)</div>
+               {isEditing ? (
+                 <input type="text" className="w-full border-b border-gray-200 py-1 outline-none font-medium focus:border-blue-500 transition-colors" value={editForm.wechat} onChange={e => setEditForm({...editForm, wechat: e.target.value})} />
+               ) : (
+                 <div className="text-gray-900 font-medium">{userProfile.wechat || '未填写'}</div>
+               )}
+             </div>
+
+             {/* === 工友专属字段 === */}
              {userProfile.role === 'worker' && (
-               <div className="bg-white p-4 rounded-xl shadow-sm">
+               <>
+                 <div className="bg-white p-4 rounded-xl shadow-sm">
+                   <div className="text-xs text-gray-400 mb-1">我的简介 / 工种薪资</div>
+                   {isEditing ? (
+                     <input type="text" placeholder="例如：木工 35/hr" className="w-full border-b border-gray-200 py-1 outline-none font-medium focus:border-blue-500 transition-colors" value={editForm.intro} onChange={e => setEditForm({...editForm, intro: e.target.value})} />
+                   ) : (
+                     <div className="text-gray-900 font-medium">{userProfile.intro}</div>
+                   )}
+                 </div>
+
+                 <div className="bg-white p-4 rounded-xl shadow-sm">
+                   <div className="text-xs text-gray-400 mb-1">工作经验</div>
+                   {isEditing ? (
+                     <input type="text" placeholder="例如：5年本地经验" className="w-full border-b border-gray-200 py-1 outline-none font-medium focus:border-blue-500 transition-colors" value={editForm.experience} onChange={e => setEditForm({...editForm, experience: e.target.value})} />
+                   ) : (
+                     <div className="text-gray-900 font-medium">{userProfile.experience || '未填写'}</div>
+                   )}
+                 </div>
+               </>
+             )}
+
+             {/* 额度显示 (保持不变) */}
+             {userProfile.role === 'worker' && (
+               <div className="bg-white p-4 rounded-xl shadow-sm mt-4 opacity-80">
                  <div className="text-xs text-gray-400 mb-1">今日查看额度</div>
-                 <div className="flex justify-between items-center"><div className="font-bold text-blue-600 text-lg">{userProfile.swipes_used_today || 0} / {20 + (userProfile.swipe_quota_extra || 0)}</div><div className="text-xs text-gray-400">去邀请朋友增加额度</div></div>
+                 <div className="flex justify-between items-center">
+                   <div className="font-bold text-blue-600 text-lg">{userProfile.swipes_used_today || 0} / {20 + (userProfile.swipe_quota_extra || 0)}</div>
+                   <div className="text-xs text-gray-400">邀请朋友可增加</div>
+                 </div>
                </div>
              )}
+          </div>
+        )}
           </div>
         )}
 

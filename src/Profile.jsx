@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import { X, Loader2, ChevronRight, Gift, Copy, Crown, MessageCircle, User, Building2, Edit3, Save } from 'lucide-react';
 import AvatarUpload from './AvatarUpload'; 
@@ -17,7 +17,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const [selectedWorker, setSelectedWorker] = useState(null); 
   const [chatUser, setChatUser] = useState(null); 
 
-  // === 计数状态 ===
+  // 计数状态
   const [totalUnread, setTotalUnread] = useState(0);
   const [totalUnlocked, setTotalUnlocked] = useState(0);
 
@@ -31,120 +31,90 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     experience: userProfile.experience || ''
   });
 
-  // === 初始化加载 ===
   useEffect(() => {
     fetchTabCounts(); 
     if (activeTab === 'contacts' && userProfile.role === 'boss') fetchContacts();
     if (activeTab === 'messages') fetchConversations();
   }, [activeTab]);
 
-  // === 1. 获取 Tab 栏计数 ===
+  // === 1. 获取 Tab 栏计数 (读新表) ===
   const fetchTabCounts = async () => {
     try {
-      const { count: unreadCount } = await supabase
-        .from('messages')
-        .select('*', { count: 'exact', head: true })
-        .eq('receiver_id', session.user.id)
-        .eq('is_read', false);
-      setTotalUnread(unreadCount || 0);
+      // 直接查 conversations 表的未读总和，不用去 message 表数数了
+      const { data } = await supabase
+        .from('conversations')
+        .select('unread_count')
+        .eq('user_id', session.user.id);
+      
+      const unreadSum = data ? data.reduce((sum, item) => sum + item.unread_count, 0) : 0;
+      setTotalUnread(unreadSum);
 
       if (userProfile.role === 'boss') {
-        const { count: unlockedCount } = await supabase
+        const { count } = await supabase
           .from('contacts')
           .select('*', { count: 'exact', head: true })
           .eq('boss_id', session.user.id);
-        setTotalUnlocked(unlockedCount || 0);
+        setTotalUnlocked(count || 0);
       }
     } catch (e) { console.error(e); }
   };
 
-  // === 2. 获取消息列表 ===
+  // === 2. 获取消息列表 (读新表 - 极速模式) ===
   const fetchConversations = async () => {
     setLoadingData(true);
     try {
-      const { data: messages } = await supabase
-        .from('messages')
-        .select('*')
-        .or(`sender_id.eq.${session.user.id},receiver_id.eq.${session.user.id}`)
-        .order('created_at', { ascending: false });
+      // 联表查询：查会话表，同时把对方(contact_id)的资料(profiles)也查出来
+      const { data, error } = await supabase
+        .from('conversations')
+        .select(`
+          *,
+          contact:contact_id ( id, name, avatar_url, role )
+        `)
+        .eq('user_id', session.user.id)
+        .order('last_time', { ascending: false });
 
-      if (!messages || messages.length === 0) {
-        setConversations([]);
-        setLoadingData(false);
-        return;
-      }
+      if (error) throw error;
 
-      const otherUserIds = new Set();
-      messages.forEach(msg => {
-        if (msg.sender_id !== session.user.id) otherUserIds.add(msg.sender_id);
-        if (msg.receiver_id !== session.user.id) otherUserIds.add(msg.receiver_id);
-      });
+      // 格式化数据以适应 UI
+      const formattedList = data.map(item => ({
+        id: item.contact.id, // 对方ID
+        name: item.contact.name,
+        avatar_url: item.contact.avatar_url,
+        role: item.contact.role,
+        last_msg: item.last_message,
+        last_time: item.last_time,
+        unread_count: item.unread_count // 直接取数据库里的未读数
+      }));
 
-      if (otherUserIds.size === 0) {
-        setConversations([]);
-        setLoadingData(false);
-        return;
-      }
-
-      const { data: users } = await supabase.from('profiles').select('*').in('id', Array.from(otherUserIds));
-      
-      const conversationList = users.map(user => {
-        const userMsgs = messages.filter(m => m.sender_id === user.id || m.receiver_id === user.id);
-        const lastMsg = userMsgs[0];
-        const unreadCount = userMsgs.filter(m => m.sender_id === user.id && m.receiver_id === session.user.id && !m.is_read).length;
-
-        return { 
-          ...user, 
-          last_msg: lastMsg?.content || '', 
-          last_time: lastMsg?.created_at,
-          unread_count: unreadCount 
-        };
-      });
-      
-      conversationList.sort((a, b) => new Date(b.last_time) - new Date(a.last_time));
-      setConversations(conversationList);
-    } catch (error) { console.error(error); }
+      setConversations(formattedList);
+    } catch (error) { console.error("获取列表失败", error); }
     setLoadingData(false);
   };
 
-  // === 3. 强力消红逻辑 (核心修正) ===
-  const forceClearUnread = (targetUserId) => {
-    // A. 修正列表数据：找到这个人，强制把他的红点归零
-    setConversations(prev => {
-      const newList = prev.map(c => c.id === targetUserId ? { ...c, unread_count: 0 } : c);
-      // B. 重新计算总未读数 (不查数据库，直接算)
-      const newTotal = newList.reduce((sum, item) => sum + item.unread_count, 0);
-      setTotalUnread(newTotal);
-      return newList;
-    });
-  };
+  // === 3. 打开聊天 ===
+  const openChat = async (user) => {
+    // A. 前端视觉立即消红
+    setConversations(prev => prev.map(c => c.id === user.id ? { ...c, unread_count: 0 } : c));
+    const target = conversations.find(c => c.id === user.id);
+    if (target) setTotalUnread(prev => Math.max(0, prev - target.unread_count));
 
-  // === 4. 打开聊天 ===
-  const openChat = (user) => {
-    // 视觉上先消掉
-    forceClearUnread(user.id);
+    // B. 打开窗口
     setChatUser(user);
-    // 后台静默更新
-    supabase.from('messages').update({ is_read: true }).eq('sender_id', user.id).eq('receiver_id', session.user.id);
+
+    // C. 【关键】告诉数据库：我和这个人的未读数归零！
+    // 只要这一步执行了，下次刷新绝对是 0
+    await supabase
+      .from('conversations')
+      .update({ unread_count: 0 })
+      .eq('user_id', session.user.id)
+      .eq('contact_id', user.id);
   };
 
-  // === 5. 关闭聊天 (核心防抖) ===
-  const handleCloseChat = async () => {
-    const talkingToUserId = chatUser?.id;
-    setChatUser(null); // 关闭窗口
-
-    if (talkingToUserId) {
-      // 1. 再发一次数据库更新，确保万无一失
-      await supabase.from('messages').update({ is_read: true }).eq('sender_id', talkingToUserId).eq('receiver_id', session.user.id);
-      
-      // 2. 拉取最新数据
-      await fetchConversations();
-      await fetchTabCounts();
-
-      // 3. 【关键】拉取完数据后，再次执行“强力消红”
-      // 这一步是为了防止数据库延迟返回了“未读”，我们再次手动纠正它
-      forceClearUnread(talkingToUserId);
-    }
+  // === 4. 关闭聊天 ===
+  const handleCloseChat = () => {
+    setChatUser(null);
+    // 刷新一下列表，确保最新消息显示出来
+    fetchConversations(); 
   };
 
   // === 保存资料 ===
@@ -202,12 +172,8 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
   const inviteLink = `${window.location.origin}/?ref=${userProfile.phone}`;
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(inviteLink)}`;
 
-  // === 渲染：聊天窗口 ===
-  if (chatUser) {
-    return <Chat session={session} otherUser={chatUser} onClose={handleCloseChat} />;
-  }
+  if (chatUser) return <Chat session={session} otherUser={chatUser} onClose={handleCloseChat} />;
 
-  // === 渲染：查看他人详情 ===
   if (selectedWorker) {
     return (
       <div className="fixed inset-0 z-[60] bg-white flex flex-col animate-slide-in-right">
@@ -218,11 +184,7 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
         <div className="p-6 flex-1 overflow-y-auto bg-gray-50">
           <div className="bg-white rounded-2xl p-6 shadow-sm text-center mb-6">
              <div className="w-24 h-24 mx-auto mb-4">
-               {selectedWorker.avatar_url ? (
-                 <img src={selectedWorker.avatar_url} className="w-full h-full rounded-full object-cover border-4 border-gray-50 shadow-md" />
-               ) : (
-                 <div className="w-full h-full bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-3xl">{selectedWorker.name?.[0]}</div>
-               )}
+               {selectedWorker.avatar_url ? <img src={selectedWorker.avatar_url} className="w-full h-full rounded-full object-cover border-4 border-gray-50 shadow-md" /> : <div className="w-full h-full bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-3xl">{selectedWorker.name?.[0]}</div>}
              </div>
              <h3 className="text-2xl font-bold text-gray-900">{selectedWorker.name}</h3>
              <p className="text-gray-500 mt-1">{selectedWorker.intro}</p>
@@ -239,7 +201,6 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
     );
   }
 
-  // === 渲染：个人中心 ===
   return (
     <div className="fixed inset-0 z-50 bg-gray-100 flex flex-col animate-slide-in-right">
       <div className="bg-white px-6 py-4 flex justify-between items-center shadow-sm">
@@ -254,63 +215,28 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
           <h3 className="text-xl font-bold text-gray-900">{userProfile?.name}</h3>
           <p className="text-gray-500 text-sm mt-1 mb-2">{userProfile?.role === 'boss' ? `${config.role_boss_label}` : `${config.role_worker_label}`}</p>
-          
           {userProfile?.role === 'boss' && <div className="inline-block px-4 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-bold mb-4">余额: {userProfile.credits || 0} {config.currency_name}</div>}
-          {userProfile?.role === 'boss' && (
-             <div className="mb-6"><button onClick={handleContactSupport} className="bg-gray-900 text-yellow-400 px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-gray-300 flex items-center gap-2 mx-auto animate-pulse active:scale-95 transition-transform"><Crown size={16} /> 开通 {config.vip_label}</button></div>
-          )}
-          
+          {userProfile?.role === 'boss' && (<div className="mb-6"><button onClick={handleContactSupport} className="bg-gray-900 text-yellow-400 px-6 py-2 rounded-full text-sm font-bold shadow-lg shadow-gray-300 flex items-center gap-2 mx-auto animate-pulse active:scale-95 transition-transform"><Crown size={16} /> 开通 {config.vip_label}</button></div>)}
           <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-100 rounded-xl p-4 text-left">
             <div className="flex justify-between items-start">
-              <div>
-                <div className="flex items-center gap-2 text-yellow-800 font-bold mb-2"><Gift size={18} /> 邀请有奖</div>
-                <p className="text-xs text-yellow-700 mb-3 leading-relaxed">分享链接，双方有奖！</p>
-                <button onClick={() => {navigator.clipboard.writeText(inviteLink); alert("链接已复制！");}} className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 shadow-sm"><Copy size={12}/> 复制链接</button>
-              </div>
+              <div><div className="flex items-center gap-2 text-yellow-800 font-bold mb-2"><Gift size={18} /> 邀请有奖</div><p className="text-xs text-yellow-700 mb-3 leading-relaxed">分享链接，双方有奖！</p><button onClick={() => {navigator.clipboard.writeText(inviteLink); alert("链接已复制！");}} className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 shadow-sm"><Copy size={12}/> 复制链接</button></div>
               <div className="w-20 h-20 bg-white p-1 rounded-lg shadow-sm border border-yellow-200"><img src={qrCodeUrl} alt="QR" className="w-full h-full object-contain" /></div>
             </div>
           </div>
         </div>
 
-        {/* === Tab 导航栏 (带数字) === */}
         <div className="flex bg-gray-200 p-1 rounded-xl mb-6 overflow-x-auto">
-          <button onClick={() => setActiveTab('info')} className={`flex-1 py-2 px-1 text-xs font-medium rounded-lg whitespace-nowrap ${activeTab === 'info' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
-            资料
-          </button>
-          
+          <button onClick={() => setActiveTab('info')} className={`flex-1 py-2 px-1 text-xs font-medium rounded-lg whitespace-nowrap ${activeTab === 'info' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>资料</button>
           <button onClick={() => setActiveTab('messages')} className={`relative flex-1 py-2 px-1 text-xs font-medium rounded-lg flex items-center justify-center gap-1 whitespace-nowrap ${activeTab === 'messages' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
-            消息
-            {/* 消息数量标记 */}
-            {totalUnread > 0 && <span className="ml-1 bg-red-500 text-white text-[10px] px-1.5 h-4 flex items-center justify-center rounded-full shadow-sm">{totalUnread}</span>}
+            消息 {totalUnread > 0 && <span className="ml-1 bg-red-500 text-white text-[10px] px-1.5 h-4 flex items-center justify-center rounded-full shadow-sm">{totalUnread}</span>}
           </button>
-          
-          {userProfile?.role === 'boss' && (
-            <button onClick={() => setActiveTab('contacts')} className={`relative flex-1 py-2 px-1 text-xs font-medium rounded-lg flex items-center justify-center gap-1 whitespace-nowrap ${activeTab === 'contacts' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
-              已解锁
-              {/* 解锁数量标记 */}
-              {totalUnlocked > 0 && <span className="ml-1 bg-blue-100 text-blue-600 text-[10px] px-1.5 h-4 flex items-center justify-center rounded-full font-bold">{totalUnlocked}</span>}
-            </button>
-          )}
-          
-          <button onClick={() => setActiveTab('password')} className={`flex-1 py-2 px-1 text-xs font-medium rounded-lg whitespace-nowrap ${activeTab === 'password' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
-            安全
-          </button>
+          {userProfile?.role === 'boss' && <button onClick={() => setActiveTab('contacts')} className={`relative flex-1 py-2 px-1 text-xs font-medium rounded-lg flex items-center justify-center gap-1 whitespace-nowrap ${activeTab === 'contacts' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>已解锁 {totalUnlocked > 0 && <span className="ml-1 bg-blue-100 text-blue-600 text-[10px] px-1.5 h-4 flex items-center justify-center rounded-full font-bold">{totalUnlocked}</span>}</button>}
+          <button onClick={() => setActiveTab('password')} className={`flex-1 py-2 px-1 text-xs font-medium rounded-lg whitespace-nowrap ${activeTab === 'password' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>安全</button>
         </div>
 
-        {/* Tab 内容: 资料 */}
         {activeTab === 'info' && (
           <div className="space-y-4 animate-fade-in">
-             <div className="flex justify-end mb-2">
-               {isEditing ? (
-                 <button onClick={handleSaveProfile} className="flex items-center gap-1 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md hover:bg-green-700 transition-all">
-                   <Save size={16} /> 保存资料
-                 </button>
-               ) : (
-                 <button onClick={() => setIsEditing(true)} className="flex items-center gap-1 bg-white text-blue-600 border border-blue-100 px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:bg-blue-50 transition-all">
-                   <Edit3 size={16} /> 修改资料
-                 </button>
-               )}
-             </div>
+             <div className="flex justify-end mb-2">{isEditing ? <button onClick={handleSaveProfile} className="flex items-center gap-1 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md hover:bg-green-700 transition-all"><Save size={16} /> 保存资料</button> : <button onClick={() => setIsEditing(true)} className="flex items-center gap-1 bg-white text-blue-600 border border-blue-100 px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:bg-blue-50 transition-all"><Edit3 size={16} /> 修改资料</button>}</div>
              <div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">怎么称呼</div>{isEditing ? <input type="text" className="w-full border-b border-gray-200 py-1 outline-none font-medium" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} /> : <div className="text-gray-900 font-medium">{userProfile.name}</div>}</div>
              <div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">手机号</div>{isEditing ? <input type="tel" className="w-full border-b border-gray-200 py-1 outline-none font-medium" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} /> : <div className="text-gray-900 font-medium">{userProfile.phone}</div>}</div>
              <div className="bg-white p-4 rounded-xl shadow-sm"><div className="text-xs text-gray-400 mb-1">微信号 (选填)</div>{isEditing ? <input type="text" className="w-full border-b border-gray-200 py-1 outline-none font-medium" value={editForm.wechat} onChange={e => setEditForm({...editForm, wechat: e.target.value})} /> : <div className="text-gray-900 font-medium">{userProfile.wechat || '未填写'}</div>}</div>
@@ -318,54 +244,34 @@ export default function Profile({ session, userProfile, onClose, onLogout, onPro
           </div>
         )}
 
-        {/* Tab 内容: 消息 */}
         {activeTab === 'messages' && (
           <div className="space-y-3 animate-fade-in">
-            {loadingData ? (
-               <div className="flex justify-center py-10"><Loader2 className="animate-spin text-gray-400"/></div>
-            ) : conversations.length === 0 ? (
-               <div className="text-center py-10 text-gray-400"><MessageCircle size={48} className="mx-auto mb-2 opacity-20"/><p>暂无消息</p></div>
-            ) : (
-              conversations.map(user => (
+            {loadingData ? <div className="flex justify-center py-10"><Loader2 className="animate-spin text-gray-400"/></div> : conversations.length === 0 ? <div className="text-center py-10 text-gray-400"><MessageCircle size={48} className="mx-auto mb-2 opacity-20"/><p>暂无消息</p></div> : conversations.map(user => (
                 <div key={user.id} onClick={() => openChat(user)} className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-3 cursor-pointer active:scale-95 transition-transform relative">
                   <div className="relative w-12 h-12 flex-shrink-0">
-                    <div className="w-12 h-12 rounded-full bg-gray-100 overflow-hidden">
-                       {user.avatar_url ? <img src={user.avatar_url} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-gray-400 font-bold">{user.name?.[0]}</div>}
-                    </div>
-                    {/* 红点显示 */}
+                    <div className="w-12 h-12 rounded-full bg-gray-100 overflow-hidden">{user.avatar_url ? <img src={user.avatar_url} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-gray-400 font-bold">{user.name?.[0]}</div>}</div>
                     {user.unread_count > 0 && <span className="absolute top-0 right-0 w-5 h-5 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">{user.unread_count}</span>}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-center mb-1">
-                      <div className="font-bold text-gray-900 truncate">{user.name}</div>
-                      <div className="text-[10px] text-gray-400">{new Date(user.last_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
-                    </div>
+                    <div className="flex justify-between items-center mb-1"><div className="font-bold text-gray-900 truncate">{user.name}</div><div className="text-[10px] text-gray-400">{new Date(user.last_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div></div>
                     <div className="text-sm text-gray-500 truncate">{user.last_msg}</div>
                   </div>
                 </div>
-              ))
-            )}
+              ))}
           </div>
         )}
 
-        {/* Tab 内容: 已解锁 */}
         {activeTab === 'contacts' && (
           <div className="space-y-3 animate-fade-in">
             {loadingData ? <div className="flex justify-center py-4"><Loader2 className="animate-spin"/></div> : contacts.map(worker => (
                 <div key={worker.id} onClick={() => setSelectedWorker(worker)} className="bg-white p-4 rounded-xl shadow-sm flex justify-between items-center cursor-pointer active:scale-95 transition-transform">
-                  <div className="flex items-center gap-3">
-                     <div className="w-10 h-10 rounded-full bg-gray-100 overflow-hidden">
-                       {worker.avatar_url ? <img src={worker.avatar_url} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-gray-400 font-bold">{worker.name?.[0]}</div>}
-                     </div>
-                     <div className="font-bold text-gray-900">{worker.name}</div>
-                  </div>
+                  <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-full bg-gray-100 overflow-hidden">{worker.avatar_url ? <img src={worker.avatar_url} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-gray-400 font-bold">{worker.name?.[0]}</div>}</div><div className="font-bold text-gray-900">{worker.name}</div></div>
                   <ChevronRight size={18} className="text-gray-300" />
                 </div>
             ))}
           </div>
         )}
 
-        {/* Tab 内容: 安全 */}
         {activeTab === 'password' && (
           <div className="bg-white p-6 rounded-xl shadow-sm space-y-4 animate-fade-in">
             <input type="password" placeholder="新密码" className="w-full px-4 py-3 bg-gray-50 rounded-xl" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
